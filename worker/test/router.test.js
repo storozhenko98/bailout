@@ -4,15 +4,15 @@ import { handle, freePricing, freeModel, usableEndpoint, zero, validateInput } f
 
 const model = (id = 'test/coder:free') => ({
   id, name: id, context_length: 128000, description: 'An agentic coding model.',
-  pricing: { prompt: '0', completion: '0' }, supported_parameters: ['tools', 'max_tokens'],
+  pricing: { prompt: '0', completion: '0' }, supported_parameters: ['tools', 'tool_choice', 'max_tokens'],
 });
 const endpoint = id => ({
   model_id: id, status: 0, tag: 'test-provider/fp16', context_length: 128000,
   pricing: { prompt: '0', completion: '0', discount: 0 },
-  supported_parameters: ['tools', 'max_tokens'], max_completion_tokens: 8192,
+  supported_parameters: ['tools', 'tool_choice', 'max_tokens'], max_completion_tokens: 8192,
   uptime_last_30m: 99, uptime_last_5m: 100,
 });
-const answer = () => ({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'done' } }], usage: { cost: 0 } });
+const answer = () => ({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_a', type: 'function', function: { name: 'bash', arguments: '{"command":"pwd"}' } }] } }], usage: { cost: 0 } });
 const env = { OPENROUTER_API_KEY: 'test-secret-not-real' };
 const input = (selected = 'auto') => ({ model: selected, messages: [{ role: 'user', content: 'hello' }] });
 const request = body => new Request('https://bailout.test/v1/chat', { method: 'POST', body: JSON.stringify(body) });
@@ -57,6 +57,7 @@ test('every inference gets fresh metadata, exact endpoints and a zero-price cap'
     assert.deepEqual(body.provider.only, ['test-provider/fp16']);
     assert.equal(body.provider.allow_fallbacks, false);
     assert.equal(body.provider.require_parameters, true);
+    assert.equal(body.tool_choice, 'required');
     assert.deepEqual(body.tools.map(t => t.function.name), ['bash']);
     assert.equal(c.init.headers.Authorization, 'Bearer test-secret-not-real');
     assert.equal(body.models, undefined);
@@ -155,4 +156,37 @@ test('upstream error details never expose the server key', async () => {
   const response = await handle(request(input()), env, stub.fetcher);
   assert.equal(response.status, 503);
   assert.equal((await response.text()).includes(env.OPENROUTER_API_KEY), false);
+});
+
+test('a model cannot claim success without a first Bash call', async () => {
+  const stub = upstream({ completion: { choices: [{ message: { role: 'assistant', content: 'I changed the file.' } }] } });
+  const response = await handle(request(input()), env, stub.fetcher);
+  assert.equal(response.status, 502);
+  assert.match((await response.json()).error, /No work was performed/);
+});
+
+test('after a tool result the model can finish without calling another tool', async () => {
+  const stub = upstream({ completion: { choices: [{ message: { role: 'assistant', content: 'Done.' } }] } });
+  const body = input();
+  body.messages.push(answer().choices[0].message, { role: 'tool', tool_call_id: 'call_a', content: 'ok' });
+  const response = await handle(request(body), env, stub.fetcher);
+  assert.equal(response.status, 200);
+  assert.equal(JSON.parse(stub.inferences()[0].init.body).tool_choice, 'auto');
+});
+
+test('a fallback model becoming paid after the first attempt is rejected', async () => {
+  const a = model('test/a:free');
+  const b = model('test/b:free');
+  const stub = upstream({ catalog: [a, b] });
+  const fetcher = (url, init) => {
+    if (url.endsWith('/chat/completions')) {
+      stub.calls.push({ url, init });
+      b.pricing.prompt = '0.001';
+      return Promise.resolve(Response.json({}, { status: 429 }));
+    }
+    return stub.fetcher(url, init);
+  };
+  assert.equal((await handle(request(input()), env, fetcher)).status, 429);
+  assert.equal(stub.inferences().length, 1);
+  assert.equal(stub.calls.filter(c => c.url.endsWith('/models')).length, 2);
 });

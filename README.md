@@ -54,6 +54,8 @@ Background servers should redirect their output. Default command timeout: 2 minu
 the model can request up to 30 minutes. Each task allows 50 model steps by default.
 Tool output is bounded; old complete conversation turns are dropped when needed.
 Conversations stay in memory and are not saved to disk.
+The first model step of each task must call Bash; a text-only claim that work was
+done is rejected when no tool has run. Subsequent steps can finish with a text answer.
 
 This intentionally uses ordinary terminal line input and scrollback, not a full-screen
 TUI. There are no plugins, MCP, extra file tools, browser tools, or local inference.

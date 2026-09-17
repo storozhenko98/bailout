@@ -6,4 +6,3 @@ node_modules/
 .dev.vars*
 *.secret
 .DS_Store
-

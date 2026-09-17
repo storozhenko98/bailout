@@ -41,12 +41,14 @@ export function freePricing(pricing) {
 export function freeModel(model) {
   return typeof model?.id === 'string' && /^[\w.-]+\/[\w.-]+:free$/.test(model.id) &&
     freePricing(model.pricing) && model.supported_parameters?.includes('tools') &&
+    model.supported_parameters?.includes('tool_choice') &&
     model.context_length >= 32768;
 }
 
 export function usableEndpoint(endpoint, modelId) {
   return endpoint?.model_id === modelId && endpoint.status === 0 &&
     freePricing(endpoint.pricing) && endpoint.supported_parameters?.includes('tools') &&
+    endpoint.supported_parameters?.includes('tool_choice') &&
     endpoint.supported_parameters?.includes('max_tokens') &&
     typeof endpoint.tag === 'string' && endpoint.tag.length > 0 &&
     (endpoint.context_length ?? 0) >= 32768 &&
@@ -165,6 +167,7 @@ export function completionBody(model, live, messages) {
     model: model.id,
     messages,
     tools: [BASH_TOOL],
+    tool_choice: needsTool(messages) ? 'required' : 'auto',
     stream: false,
     max_tokens: Math.min(8192, ...caps),
     provider: {
@@ -176,7 +179,12 @@ export function completionBody(model, live, messages) {
   };
 }
 
-function checkedMessage(result) {
+function needsTool(messages) {
+  const lastUser = messages.findLastIndex(m => m.role === 'user');
+  return !messages.slice(lastUser + 1).some(m => m.role === 'tool');
+}
+
+function checkedMessage(result, requireTool) {
   // The request cap prevents spend. This is an additional audit, not a refund mechanism.
   if (result.usage?.cost != null && !zero(result.usage.cost)) throw new Failure(502, 'Upstream reported nonzero cost. Stopped; investigate the provider.');
   const choice = result.choices?.[0];
@@ -184,6 +192,7 @@ function checkedMessage(result) {
   if (choice?.finish_reason === 'length') throw new Failure(502, 'Model response was truncated; no commands were executed. Try a smaller task or another model.');
   if (!m || m.role !== 'assistant' || (m.content != null && typeof m.content !== 'string')) throw new Failure(502, 'Malformed model response.');
   const message = { role: 'assistant', content: m.content ?? null };
+  if (requireTool && !m.tool_calls?.length) throw new Failure(502, 'Model skipped the required Bash call. No work was performed. Try another free model.');
   if (m.tool_calls?.length) {
     if (!Array.isArray(m.tool_calls) || m.tool_calls.length > 16) throw new Failure(502, 'Invalid model tool calls.');
     const ids = new Set();
@@ -244,7 +253,7 @@ async function complete(input, env, fetcher) {
       if ([429, 500, 502, 503].includes(lastStatus)) continue;
       throw new Failure(502, 'OpenRouter could not complete this request.');
     }
-    return json({ model: model.id, message: checkedMessage(result), usage: { cost: result.usage?.cost ?? null }, checked_at: new Date().toISOString() });
+    return json({ model: model.id, message: checkedMessage(result, needsTool(input.messages)), usage: { cost: result.usage?.cost ?? null }, checked_at: new Date().toISOString() });
   }
   throw new Failure(lastStatus === 429 ? 429 : 503, lastStatus === 429
     ? 'Free-model quota or capacity exhausted. Try later; paid models are never used.'
