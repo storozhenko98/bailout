@@ -113,8 +113,12 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo build --release --locked
 python3 scripts/check-size.py target/release/bailout
 python3 scripts/smoke.py target/release/bailout
+python3 scripts/test-installer.py
 cd worker && npm ci && npm test
 ```
+
+Optional live file-write verification (uses shared free quota):
+`python3 scripts/live-smoke.py target/release/bailout`.
 
 Only two direct Rust dependencies: `serde_json` and `libc`. System curl handles TLS;
 Bash handles everything the model does. The Worker is about 5 KB gzipped with no

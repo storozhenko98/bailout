@@ -4,6 +4,7 @@ import http.server
 import json
 import os
 import pathlib
+import pty
 import signal
 import subprocess
 import sys
@@ -51,6 +52,24 @@ with tempfile.TemporaryDirectory(prefix="bailout-smoke-") as folder:
     assert pathlib.Path(folder, "hello.txt").read_text() == "hello bailout\n"
     assert "Created and verified" in result.stdout
     assert len(calls) == 2
+    master, slave = pty.openpty()
+    interactive = subprocess.Popen([binary], cwd=folder, env=env, stdin=slave, stdout=slave, stderr=slave)
+    os.close(slave)
+    os.write(master, b'/help\n/model auto\ncreate hello.txt\n/new\n/exit\n')
+    terminal_output = b''
+    while True:
+        try:
+            chunk = os.read(master, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        terminal_output += chunk
+    interactive.wait(timeout=5)
+    os.close(master)
+    assert interactive.returncode == 0
+    assert b'Created and verified' in terminal_output
+    assert b'Conversation cleared' in terminal_output
     mode = "interrupt"
     process = subprocess.Popen([binary, "wait"], cwd=folder, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     pidfile = pathlib.Path(folder, "child.pid")
@@ -67,4 +86,4 @@ with tempfile.TemporaryDirectory(prefix="bailout-smoke-") as folder:
     ps = subprocess.run(["ps", "-o", "stat=", "-p", child_pid], capture_output=True, text=True)
     assert not ps.stdout.strip() or ps.stdout.strip().startswith("Z"), f"Child survived interruption: {ps.stdout}"
 server.shutdown()
-print("PASS: real HTTP → Bash edit → tool result → final answer; Ctrl-C kills child processes")
+print("PASS: one-shot + interactive terminal → HTTP → Bash edit → final answer; Ctrl-C kills children")
