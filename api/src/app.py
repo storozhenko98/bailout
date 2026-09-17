@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from router import Failure, MAX_BODY, Router, validate
 from transport import Transport
 
-app = FastAPI(title="bailout API", version="0.2.0", description="A small, free-only API for the bailout terminal agent.")
+app = FastAPI(title="bailout API", version="0.3.0", description="Free-only inference for bailout, the temporary machine setup and recovery harness.")
 app.add_middleware(CORSMiddleware, allow_origins=["https://bailout.bailout-router.workers.dev", "http://localhost:4173"], allow_methods=["GET"], allow_headers=[])
 
 
@@ -53,7 +53,7 @@ async def limits(request, call_next):
 
 @app.get("/health", tags=["service"])
 async def health(request: Request):
-    return {"ok": True, "service": "bailout", "version": "0.2.0", "framework": "FastAPI", "free_only": True, "configured": bool(binding(request, "OPENROUTER_API_KEY"))}
+    return {"ok": True, "service": "bailout", "version": "0.3.0", "framework": "FastAPI", "free_only": True, "configured": bool(binding(request, "OPENROUTER_API_KEY"))}
 
 
 @app.get("/", tags=["service"])

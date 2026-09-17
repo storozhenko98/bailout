@@ -8,6 +8,7 @@ import pathlib
 import pty
 import select
 import signal
+import shutil
 import struct
 import subprocess
 import sys
@@ -18,6 +19,7 @@ import time
 
 binary = pathlib.Path(sys.argv[1]).resolve()
 calls = []
+gateway_failures = 0
 model_wait = threading.Event()
 release_wait = threading.Event()
 
@@ -34,16 +36,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
     def do_POST(self):
+        global gateway_failures
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         calls.append(body)
         assert self.path == '/v1/chat'
         assert body['model'] == 'auto'
         prompt = next(m['content'] for m in reversed(body['messages']) if m['role'] == 'user')
+        if prompt == 'gateway retry' and gateway_failures == 0:
+            gateway_failures += 1
+            self.send_response(503); self.end_headers()
+            self.wfile.write(b'Temporary gateway failure')
+            return
         if prompt == 'wait model':
             model_wait.set()
             release_wait.wait(15)
         if body['messages'][-1]['role'] == 'tool':
-            message = dict(role='assistant', content='Created and verified hello.txt.')
+            message = dict(role='assistant', content='Local step complete.' if prompt in ('local login','cancel login') else 'Created and verified hello.txt.')
+        elif prompt in ('local login', 'cancel login'):
+            command = 'read -r -s -p "Local token: " token; test -n "$token"; printf "\\nLocal auth complete\\n"'
+            message = dict(role='assistant', content=None, tool_calls=[dict(id='local_1', type='function', function=dict(name='bash', arguments=json.dumps(dict(command=command, interactive=True))))])
         elif prompt in ('create hello.txt', 'wait bash', 'broken stream'):
             command = "printf 'hello bailout\\n' > hello.txt; cat hello.txt"
             if prompt == 'wait bash': command = 'sleep 30 & echo $! > child.pid; wait'
@@ -124,12 +135,31 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
     hello = run('hello')
     assert hello.returncode == 0 and hello.stdout == 'Reply: hello\n', (hello.stdout, hello.stderr)
     assert '$ ' not in hello.stderr
+    gateway = run('gateway retry')
+    assert gateway.returncode == 0 and 'Reply: gateway retry' in gateway.stdout
+    assert gateway_failures == 1
     broken = run('broken stream')
     assert broken.returncode == 1 and not pathlib.Path(folder, 'hello.txt').exists()
     result = run('create hello.txt')
     assert result.returncode == 0, result.stderr
     assert pathlib.Path(folder, 'hello.txt').read_text() == 'hello bailout\n'
     assert 'Created and verified' in result.stdout
+    # A fresh-machine process: no Git/gh/Node/Python/agent/key on PATH, and broken
+    # personal startup hooks must not prevent bailout's own transport or Bash.
+    minimal_bin = pathlib.Path(folder, 'minimal-bin')
+    minimal_home = pathlib.Path(folder, 'minimal-home')
+    minimal_bin.mkdir(); minimal_home.mkdir()
+    for name in ['bash', 'curl', 'cat']:
+        (minimal_bin/name).symlink_to(shutil.which(name))
+    (minimal_home/'.curlrc').write_text('this-is-an-invalid-curl-option\n')
+    startup = minimal_home/'broken-startup'
+    startup.write_text('exit 99\n')
+    minimal_env = {'PATH': str(minimal_bin), 'HOME': str(minimal_home),
+                   'BASH_ENV': str(startup), 'BAILOUT_API_URL': env['BAILOUT_API_URL']}
+    fresh = subprocess.run([binary, 'create hello.txt'], cwd=folder, env=minimal_env,
+                           capture_output=True, text=True, timeout=15)
+    assert fresh.returncode == 0, fresh.stderr
+    assert 'Created and verified' in fresh.stdout
     terminal = Terminal(folder)
     try:
         terminal.prompt()
@@ -151,6 +181,25 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
         terminal.expect('model › ')
         terminal.send('0\r')
         terminal.expect('Model: auto')
+        terminal.prompt()
+        terminal.send('local login\r')
+        terminal.expect('Local token: ')
+        terminal.send('fixture-secret-value\r')
+        terminal.expect('Local step complete.')
+        terminal.prompt()
+        assert all('fixture-secret-value' not in json.dumps(c) for c in calls)
+        assert 'not captured' in calls[-1]['messages'][-1]['content']
+        terminal.send('cancel login\r')
+        terminal.expect('Local token: ')
+        terminal.send(b'\x03')
+        terminal.expect('Stopped.')
+        terminal.prompt()
+        terminal.send('/shell\r')
+        terminal.expect('This shell is not sent to the model.')
+        terminal.send("printf 'SHELL_OK\\n'\r")
+        terminal.expect('\r\nSHELL_OK\r\n')
+        terminal.send('exit\r')
+        terminal.expect('Back in bailout')
         terminal.prompt()
         terminal.send('wait model\r')
         terminal.expect('Thinking')
@@ -186,5 +235,12 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
         basic.send(b'\x03')
         basic.exit()
     finally: basic.cleanup()
+    disposable = pathlib.Path(folder, 'bailout-to-remove')
+    retained = pathlib.Path(folder, 'keep-my-config')
+    retained.write_text('keep this')
+    shutil.copy2(binary, disposable)
+    removed = subprocess.run([disposable, 'uninstall'], capture_output=True, text=True, timeout=5)
+    assert removed.returncode == 0 and not disposable.exists()
+    assert retained.read_text() == 'keep this'
 server.shutdown()
-print('PASS: streamed chat without Bash, file edit, partial stream rejection, real Ctrl-C while editing/model/Bash/idle, history, Unicode, multiline, model picker, recovery')
+print('PASS: minimal fresh-machine environment, streamed chat without Bash, file edit, partial stream rejection, real Ctrl-C while editing/model/Bash/idle, history, Unicode, multiline, model picker, local login without credential capture, interactive cancellation, local shell, uninstall, recovery')

@@ -1,3 +1,4 @@
+mod local;
 mod ui;
 
 use serde_json::{json, Value};
@@ -254,6 +255,10 @@ fn api(base: &str, path: &str, body: Option<Value>) -> Result<Value> {
 }
 
 fn stream_chat(base: &str, body: Value) -> Result<Value> {
+    stream_chat_attempt(base, body, true)
+}
+
+fn stream_chat_attempt(base: &str, payload: Value, retry_gateway: bool) -> Result<Value> {
     let mut cmd = Command::new("curl");
     cmd.args([
         "-q",
@@ -295,7 +300,7 @@ fn stream_chat(base: &str, body: Value) -> Result<Value> {
     };
     let run = execute_observed(
         cmd,
-        Some(body.to_string().into_bytes()),
+        Some(payload.to_string().into_bytes()),
         Duration::from_secs(185),
         false,
         2_000_010,
@@ -318,6 +323,21 @@ fn stream_chat(base: &str, body: Value) -> Result<Value> {
         .ok_or("Invalid HTTP response")?;
     if code != "200" {
         let value: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+        // Retry one gateway failure before any validated command was received.
+        // Service policy errors and rate limits retain their original response.
+        if retry_gateway
+            && matches!(code, "502" | "503" | "504")
+            && value["error"].as_str().is_none()
+        {
+            ui::note("Service connection interrupted. Retrying once…");
+            for _ in 0..50 {
+                if CANCELLED.load(Ordering::SeqCst) {
+                    return Err("Interrupted.".into());
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            return stream_chat_attempt(base, payload, false);
+        }
         return Err(value["error"]
             .as_str()
             .map(str::to_string)
@@ -354,7 +374,13 @@ fn bash(args: &Value) -> Result<Value> {
             .as_u64()
             .filter(|n| *n > 0 && *n <= 1_800_000)
             .ok_or("Invalid Bash timeout.")?,
-        None => 120_000,
+        None => {
+            if args["interactive"] == true {
+                600_000
+            } else {
+                120_000
+            }
+        }
     };
     let mut cmd = Command::new("bash");
     cmd.args(["--noprofile", "--norc", "-c", source]);
@@ -365,6 +391,23 @@ fn bash(args: &Value) -> Result<Value> {
     }
     ui::tool_start(source);
     let start = Instant::now();
+    if args["interactive"] == true {
+        ui::note("Your terminal · input and output stay out of the model conversation");
+        let run = local::interactive(cmd, Duration::from_millis(timeout))?;
+        if let Ok(mut last) = LAST_OUTPUT.lock() {
+            *last = run.output.clone();
+        }
+        ui::note(&format!(
+            "{} · exit {}",
+            if run.timed_out {
+                "Timed out"
+            } else {
+                "Finished"
+            },
+            run.code
+        ));
+        return Ok(json!({"output":run.output,"exit_code":run.code,"timed_out":run.timed_out}));
+    }
     let waiting = ui::Spinner::new("Running Bash");
     let run = execute(
         cmd,
@@ -390,7 +433,16 @@ fn bash(args: &Value) -> Result<Value> {
 fn system() -> Value {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     json!({"role":"system", "content": format!(
-        "You are bailout, an expert coding assistant operating inside the user's terminal. \
+        "You are bailout, a temporary setup and recovery harness. Help bootstrap a fresh \
+        Mac or Linux machine, or repair the user's main coding tools so they can get back to work. \
+        Inspect the OS, installed tools, and relevant configuration before making changes. \
+        Back up configuration before repairing it, preserve working setup, and prefer official install sources. \
+        For sign-in, sudo, or secret entry, use bash with interactive=true so the user interacts directly \
+        with the command. Never ask for a password, token, or private key in chat; never print secrets \
+        or read credential files into captured output. Interactive output stays local; use safe status \
+        commands afterward to verify success. When finished, explain what works, what still needs \
+        the user's action, and how to launch their normal tools. Mention bailout uninstall when it is \
+        no longer needed, but never remove bailout without an explicit request. \
         Answer questions and conversation directly. For tasks involving files or commands, \
         call the bash tool yourself to do the work. You cannot create, inspect, edit, or verify \
         a file by writing an answer. Only actual tool results establish that an action happened. \
@@ -590,14 +642,16 @@ fn select_model(selected: &str, ids: &[String]) -> Result<String> {
 
 fn help() {
     println!(
-        "bailout {VERSION} — a tiny coding agent for your terminal.\n\n\
+        "bailout {VERSION} — the harness meant to be deleted.\n\n\
 Usage: bailout [--model MODEL] [--max-steps N] [PROMPT]\n\
        bailout models\n\n\
-Ask a question, or give it a task. Bash commands run automatically.\n\n\
+Bootstrap a fresh machine or repair your usual coding tools.\n\
+Bash commands run automatically. No local API key or agent setup needed.\n\n\
   /model          choose a free model\n\
   /model ID       select a model directly (or auto)\n\
   /models         list available free models\n\
   /last           show the last command's full captured output\n\
+  /shell          local Bash for sign-in or private setup; exit to return\n\
   /new            start a fresh conversation\n\
   /help           show this help\n\
   /exit           quit\n\n\
@@ -607,6 +661,7 @@ Ask a question, or give it a task. Bash commands run automatically.\n\n\
   Ctrl-J          insert a newline (also Alt-Enter)\n\
   Ctrl-A / E      move to the start / end of the line\n\n\
 Options: --model ID, --max-steps N (default 50), --help, --version\n\
+Done with it? Run bailout uninstall to remove only this binary.\n\
 Environment: BAILOUT_API_URL, BAILOUT_MODEL, NO_COLOR\n\
 Bash calls start in the session directory; shell variables and cd do not persist."
     );
@@ -657,6 +712,7 @@ fn run() -> Result<()> {
                 show_models(&base)?;
                 return Ok(());
             }
+            "uninstall" if args.len() == 1 => return local::uninstall(),
             option if option.starts_with('-') => return Err(format!("Unknown option: {option}")),
             _ => break,
         }
@@ -702,6 +758,11 @@ fn run() -> Result<()> {
         match line {
             "/exit" | "/quit" => break,
             "/help" => help(),
+            "/shell" => {
+                if let Err(e) = local::shell() {
+                    ui::error(&e);
+                }
+            }
             "/new" => {
                 messages = vec![system()];
                 ui::note("Fresh conversation.");

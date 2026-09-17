@@ -1,71 +1,116 @@
 # bailout
 
-A tiny terminal coding agent. **One tool: Bash. Full auto. Free models only.**
+**The harness meant to be deleted.**
+
+You have a fresh VM or a new Mac. No GitHub CLI, no configured coding agent,
+no API key handy. Or your usual agent broke, and you need a working one to fix it.
+
+Bailout gets you a small, independent harness in one command. Use it to bootstrap
+the machine or repair your setup, get back to your normal tools, then delete it.
 
 ```sh
 curl -fsSL https://bailout.bailout-router.workers.dev/install.sh | bash
 bailout
 ```
 
-Apple Silicon macOS, x64 Linux, and arm64 Linux. Requires the system's `bash` and
-`curl`; no Node, Python, local model, or API key. The native Rust executable is
-about **0.6 MB on Apple Silicon**. Release builds must stay below **6,000,000 bytes**
-uncompressed. Linux releases use static musl, so there is no glibc version dependency.
+No account, local API key, Git, Node, Python, or existing agent required.
+Apple Silicon macOS, x64 Linux, and ARM64 Linux. Bring Bash, curl, internet access,
+and the usual base utilities (including tar and a SHA-256 utility).
+
+[Website](https://bailout.bailout-router.workers.dev) · [Setup & recovery guide](https://bailout.bailout-router.workers.dev/docs/) · [Releases](https://github.com/storozhenko98/bailout/releases/latest)
+
+## When you need it
+
+**A clean slate.** Boot an EC2 instance, a GCP VM, or a new Mac. Ask bailout to
+inspect the machine, install missing tools, help you sign in to GitHub, clone your
+repo, and get Codex, Claude Code, Pi, or OpenCode ready to use.
+
+**A broken setup.** Your normal agent no longer starts. A config is malformed, a
+runtime moved, or an update broke something. Use an independent harness to inspect
+what changed, back up the config, repair it, and verify that your main tool works.
+
+**A quick exit.** The useful outcome is your usual setup working again. Bailout has
+no daemon, account setup, persistent conversation store, or project scaffolding.
+It is one native binary, about 0.6 MB on Apple Silicon; every release stays under
+6,000,000 bytes. Linux releases are statically linked with musl.
 
 ```text
 $ bailout
 
-  bailout v0.2.0
-  ~/my-project
+  bailout v0.3.0
+  ~
 
   › auto · free models · full access
-  /model choose a model   /help shortcuts
+  Fresh machine? Broken setup? Tell me what needs to work.
+  /shell local terminal   /model choose a model   /help
 
-  › fix the failing test and run the suite
+  › this is a fresh Ubuntu VM. help me set up gh and OpenCode
 ```
 
-Commands run immediately with your account's permissions. This is not a sandbox.
-Run it in a directory you trust. The model can read, edit, delete, execute programs,
-and access the network through Bash. No command approval prompts or command allowlist.
-
-## Use
+Other starting points:
 
 ```sh
-bailout 'find and fix the bug in the parser'
-printf 'explain this project' | bailout
-bailout models
-bailout --model poolside/laguna-s-2.1:free 'add a test for empty input'
-bailout --max-steps 100 'finish the migration'
+bailout 'pi stopped launching after a config change. diagnose and repair it'
+bailout 'check what is missing before I can use my usual dev tools here'
 ```
+
+Bash is the only model tool. Commands run automatically with your account's
+permissions, including file changes, package installation, and network access.
+This is not a sandbox. The agent is instructed to inspect first, preserve working
+setup, back up configuration before repair, and verify the result.
+
+## Sign in locally
+
+Bailout provides its own free inference. The tools you set up still use **your own
+accounts and credentials**.
+
+For sign-in, sudo, or key entry, the Bash tool can hand you the real terminal with
+`interactive: true`. That command's input and output are not captured for the model;
+only its exit status is returned. You can also enter `/shell` for a local Bash
+session, then type `exit` to return. Don't paste passwords or API keys into chat.
+Normal Bash output is captured, so never ask the agent to print credential files.
+
+For example, [GitHub CLI's login flow](https://cli.github.com/manual/gh_auth_login)
+can run in the local terminal handoff. Authentication still needs your participation.
+Bailout cannot manufacture an account or recover an unavailable secret.
+
+## Done? Delete it.
+
+```sh
+bailout uninstall
+```
+
+This removes only the running bailout binary. The tools you installed, repositories
+you cloned, and configurations you repaired remain in place. It does not remove
+other tools, credentials, or directories. Reinstall with the same curl command
+whenever you need it again.
+
+## Controls
 
 | In a session | Action |
 | --- | --- |
-| `/models` | List free models, coding preference order, and live provider health |
-| `/model 2` | Pick a number from the last model list |
-| `/model vendor/model:free` | Pin an explicit free model |
-| `/model auto` | Pick a healthy free model automatically; the default |
-| `/model` | Open the interactive model picker |
-| `/last` | Expand the last command’s captured output |
-| `/new` | Clear the conversation |
-| `/help` | Show help |
-| `/exit` | Quit |
+| `/model` | Pick a currently available free model |
+| `/models` | List free models and live provider health |
+| `/model auto` | Return to automatic selection |
+| `/model vendor/model:free` | Pin a free model |
+| `/shell` | Open local Bash for private or interactive setup; `exit` returns |
+| `/last` | Expand the last command's captured output |
+| `/new` | Start a fresh conversation |
+| `/help` / `/exit` | Show help or quit |
 
-Ctrl-C stops the current request or Bash process group, including pipelines and
-children. Interactive sessions return to the prompt. One-shot cancellation exits 130.
-Each tool call starts a fresh noninteractive shell in the session directory unless
-the model supplies `workdir`. Shell variables and `cd` do not persist between calls.
-Background servers should redirect their output. Default command timeout: 2 minutes;
-the model can request up to 30 minutes. Each task allows 50 model steps by default.
-Tool output is bounded; old complete conversation turns are dropped when needed.
-Conversations stay in memory and are not saved to disk.
-Normal conversation can return a direct answer. Bash is called when the model needs to
-inspect, change, or verify something. There is no forced tool call. Replies stream as
-they arrive; tool calls execute only after a complete, validated final response.
+Ctrl-C stops a model request or Bash process group. At the prompt, it clears a draft
+or exits when empty. Up/Down browses history; Ctrl-J or Alt-Enter inserts a newline.
+Replies stream as they arrive. Questions can be answered directly, without a Bash
+call. Commands execute only after their complete tool call is validated.
 
-The terminal editor supports history, Unicode, bracketed paste, Ctrl-J / Alt-Enter
-for multiline input, and Ctrl-A / Ctrl-E. Ctrl-C clears a draft or exits an empty
-prompt. The interface uses ordinary terminal scrollback, so commands and answers
-remain readable after a task finishes. There are no plugins, MCP, extra file tools, browser tools, or local inference.
+Each Bash call starts a fresh shell in the session directory unless `workdir` is
+specified. Shell state does not persist between calls. Ordinary commands default
+to a two-minute timeout; interactive commands default to ten minutes. Models can
+request up to thirty minutes. `--max-steps N` changes the default 50 model steps.
+`--model ID` and `BAILOUT_MODEL` select a model. `NO_COLOR=1` disables colors.
+
+Bailout's Bash calls skip shell startup files, and its curl transport ignores
+`.curlrc`, so those customizations do not have to work before bailout can help.
 
 ## Free means zero
 
@@ -106,7 +151,7 @@ Source contracts: [OpenRouter provider routing](https://openrouter.ai/docs/guide
 
 ## Privacy
 
-Prompts, model-selected file contents, and Bash output are sent through the hosted
+Prompts, model-selected file contents, and captured Bash output are sent through the hosted
 Worker to OpenRouter and its selected inference provider. Provider data policies apply;
 free does not mean zero data retention. The Worker does not store conversations or
 log request bodies. Worker observability is disabled. Do not include credentials in
@@ -127,6 +172,8 @@ python3 scripts/test-installer.py
 
 Optional live file-write verification (uses shared free quota):
 `python3 scripts/live-smoke.py target/release/bailout`.
+For the recovery use case: `python3 scripts/live-recovery.py target/release/bailout`
+diagnoses a broken fixture agent, backs up its configuration, and verifies repair.
 
 Three direct Rust dependencies: `serde_json`, `libc`, and `rustyline`. System curl
 handles TLS; Bash handles everything the model does. The API is FastAPI on
@@ -135,13 +182,14 @@ forwards legacy API URLs to FastAPI.
 
 The smoke test drives a real controlling terminal. It verifies Ctrl-C as a keypress
 while editing, waiting on a model, running a child process, and at the empty prompt,
-plus history, multiline input, model selection, and recovery after interruption.
+plus history, multiline input, model selection, local interactive authentication
+without credential capture, shell handoff, uninstall, and recovery after interruption.
 
 CI runs the tests and real binary smoke checks on all three supported platforms.
 Tagging `vX.Y.Z` builds native release assets, tests them, enforces the size ceiling,
 and publishes SHA-256 checksums. The installer pins one resolved release version,
 verifies the archive checksum, checks its contents and binary size, then installs
-atomically. Set `BAILOUT_VERSION=v0.2.0` or `BAILOUT_INSTALL_DIR=/your/bin` to override.
+atomically. Set `BAILOUT_VERSION=v0.3.0` or `BAILOUT_INSTALL_DIR=/your/bin` to override.
 It prefers an existing writable PATH location and never uses sudo or modifies shell rc files.
 
 ## Website and API

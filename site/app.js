@@ -35,7 +35,7 @@ if (document.modelContext?.registerTool) {
       annotations: { readOnlyHint: true, untrustedContentHint: false },
       execute(input) {
         if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length) throw new Error('No arguments expected.');
-        return { command: document.getElementById('install-code').textContent.trim(), platforms: ['macOS ARM64', 'Linux x64', 'Linux ARM64'], next: 'Run bailout in your project directory.' };
+        return { command: document.getElementById('install-code').textContent.trim(), platforms: ['macOS ARM64', 'Linux x64', 'Linux ARM64'], next: 'Run bailout to bootstrap this machine or repair your usual tools. When finished, bailout uninstall removes the binary.' };
       },
     }, { signal: lifecycle.signal })).catch(() => {});
   } catch { /* The visible interface works without WebMCP. */ }

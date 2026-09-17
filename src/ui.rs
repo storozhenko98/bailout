@@ -54,7 +54,14 @@ pub fn welcome(version: &str, model: &str) {
             model
         }
     );
-    eprintln!("  {}\n", dim("/model choose a model   /help shortcuts"));
+    eprintln!(
+        "  {}",
+        dim("Fresh machine? Broken setup? Tell me what needs to work.")
+    );
+    eprintln!(
+        "  {}\n",
+        dim("/shell local terminal   /model choose a model   /help")
+    );
 }
 
 pub fn note(text: &str) {

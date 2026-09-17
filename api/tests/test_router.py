@@ -201,3 +201,11 @@ async def test_fastapi_routes_limits_and_errors(monkeypatch):
             assert 'test-secret-not-real' not in result.text
     finally:
         app.state.transport = None
+
+
+def test_interactive_bash_is_explicit_and_type_checked():
+    call = tool()
+    call['function']['arguments'] = json.dumps(dict(command='gh auth login', interactive=True))
+    assert check_message(completion(dict(role='assistant', tool_calls=[call])))['tool_calls']
+    call['function']['arguments'] = json.dumps(dict(command='gh auth login', interactive='yes'))
+    with pytest.raises(Failure): check_message(completion(dict(role='assistant', tool_calls=[call])))

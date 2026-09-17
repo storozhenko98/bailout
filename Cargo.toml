@@ -1,8 +1,8 @@
 [package]
 name = "bailout"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
-description = "A tiny, fully automatic terminal coding agent. One tool: bash. Free models only."
+description = "The harness meant to be deleted. Bootstrap fresh machines and repair broken coding tools."
 license = "MIT"
 repository = "https://github.com/storozhenko98/bailout"
 rust-version = "1.85"

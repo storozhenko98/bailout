@@ -1,22 +1,20 @@
-Bailout v0.2.0 makes the terminal experience usable and gives the project a home.
+Bailout is the harness meant to be deleted.
 
-- Direct conversation without mandatory Bash calls.
-- Streamed replies, an editable prompt, Unicode, history, multiline input, and a model picker.
-- Ctrl-C clears a draft, exits an empty prompt, or stops an active model request and Bash process group.
-- Compact command output with `/last` to expand the captured result.
-- A real FastAPI backend on its own API host, with interactive API docs.
-- A responsive landing page and user guide inspired by neobrutalism.dev.
-- Fresh free-price and provider-health checks on every model request. No paid fallback.
-- Apple Silicon, Linux x64, and Linux ARM64; every binary stays below 6 MB.
+Use it when you have a fresh Mac or Linux VM with no agent or API key configured—or when your main coding setup breaks and you need an independent harness to fix it. Get your normal tools running, then remove bailout.
 
-[Website](https://bailout.bailout-router.workers.dev) · [Guide](https://bailout.bailout-router.workers.dev/docs/) · [API](https://api.bailout-router.workers.dev/docs)
+- Setup and recovery instructions: inspect the machine, preserve working configuration, back up before repair, verify, and hand back to your usual tools.
+- Interactive Bash handoff for sign-in, sudo, and key entry. Its terminal input and output are not sent to the model.
+- `/shell` opens local Bash; `exit` returns to bailout.
+- `bailout uninstall` removes only the binary, leaving your tools and configuration in place.
+- Streamed replies, prompt editing, history, multiline input, model picker, and working Ctrl-C.
+- Free-only routing with fresh pricing and provider-health checks on every inference.
+- Apple Silicon macOS, Linux x64, and Linux ARM64; native binaries under 6 MB.
 
-Install or update:
+[Website](https://bailout.bailout-router.workers.dev) · [Setup & recovery guide](https://bailout.bailout-router.workers.dev/docs/) · [FastAPI reference](https://api.bailout-router.workers.dev/docs)
 
 ```sh
 curl -fsSL https://bailout.bailout-router.workers.dev/install.sh | bash
 bailout
 ```
 
-Requires Bash and curl. Commands run automatically with your permissions.
-Hosted free capacity is shared and best effort.
+No local API key, account, Git, Node, or Python required. Bring Bash, curl, and base system utilities. Commands run automatically with your permissions. Hosted free capacity is shared and best effort.

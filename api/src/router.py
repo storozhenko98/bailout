@@ -20,6 +20,7 @@ BASH_TOOL = {
                 "command": {"type": "string"},
                 "workdir": {"type": "string"},
                 "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 1800000},
+                "interactive": {"type": "boolean", "description": "Hand the real terminal to the user for login, password entry, sudo, or interactive installers. Input and output stay local; only exit status is returned. Requires an interactive bailout session."},
             },
             "required": ["command"],
             "additionalProperties": False,
@@ -194,6 +195,8 @@ def check_message(result):
                 raise Failure(502, "The model returned an empty Bash command.")
             if "workdir" in args and not isinstance(args["workdir"], str):
                 raise Failure(502, "Invalid working directory.")
+            if "interactive" in args and not isinstance(args["interactive"], bool):
+                raise Failure(502, "Invalid interactive flag.")
             if "timeout_ms" in args and (type(args["timeout_ms"]) is not int or not 1 <= args["timeout_ms"] <= 1800000):
                 raise Failure(502, "Invalid command timeout.")
         answer["tool_calls"] = calls
