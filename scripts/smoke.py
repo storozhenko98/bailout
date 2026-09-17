@@ -169,7 +169,9 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
     try:
         terminal.prompt()
         terminal.send('discard this')
+        terminal.expect('discard this')
         terminal.send(b'\x03')
+        terminal.expect('\x1b[?2004l')
         terminal.prompt()
         terminal.send('hélloX\x7f\r')
         terminal.expect('Reply: héllo')
