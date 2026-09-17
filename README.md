@@ -208,6 +208,14 @@ is inspired by [neobrutalism.dev](https://www.neobrutalism.dev/).
 Use Python 3.13+, uv 0.12.3+, and Node (for Wrangler). Choose your own Worker name
 in `api/wrangler.jsonc` before deploying.
 
+The Python API needs **Workers Paid** on Cloudflare. Its JSON processing and
+streaming exceed the Free plan's 10 ms CPU allowance; requests can otherwise be
+terminated midway through a reply. Paid starts at $5/month plus usage. This is
+hosting cost, separate from the strict zero-cost model routing. See
+[Cloudflare's current pricing](https://developers.cloudflare.com/workers/platform/pricing/)
+and [CPU limits](https://developers.cloudflare.com/workers/platform/limits/).
+You can also run the same FastAPI app on an existing server with Uvicorn.
+
 ```sh
 cd api
 uv sync
@@ -236,7 +244,7 @@ bailout
 `BAILOUT_MODEL` sets the default model. `BAILOUT_DEFAULT_API` at compile time changes
 the binary's built-in backend URL. Runtime API overrides require HTTPS, except localhost
 for development. The public service intentionally requires no login, so use your own
-Worker and key if you need a separate quota. Cloudflare hosting limits are separate
-from model prices; no paid infrastructure subscription is required by this repository.
+Worker and key if you need a separate quota. Cloudflare hosting costs and limits are
+separate from model prices.
 
 MIT licensed. Inspired by [Pi](https://pi.dev/) and [fx](https://fx.sh/).
