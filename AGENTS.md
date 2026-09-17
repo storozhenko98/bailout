@@ -28,3 +28,6 @@ must send real keystrokes through a controlling PTY, including Ctrl-C during inp
 model requests, Bash, and interactive sign-in. Keep secret-entry and uninstall tests.
 Review site changes at desktop and mobile sizes. Release through the three-platform
 GitHub workflow; verify public assets and installation before calling it shipped.
+Measure the published binaries and update the site's size claim and documentation
+table for each release. Label the platform and distinguish download size from
+uncompressed binary size; the 6 MB ceiling is a check, not the marketing claim.

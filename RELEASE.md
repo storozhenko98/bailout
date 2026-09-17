@@ -8,7 +8,7 @@ Use it when you have a fresh Mac or Linux VM with no agent or API key configured
 - `bailout uninstall` removes only the binary, leaving your tools and configuration in place.
 - Streamed replies, prompt editing, history, multiline input, model picker, and working Ctrl-C.
 - Free-only routing with fresh pricing and provider-health checks on every inference.
-- Apple Silicon macOS, Linux x64, and Linux ARM64; native binaries under 6 MB.
+- Apple Silicon macOS: 604,704 bytes; Linux x64: 807,712 bytes; Linux ARM64: 725,248 bytes. All sizes are the full uncompressed binary.
 
 [Website](https://bailout.dev) · [Setup & recovery guide](https://bailout.dev/docs/) · [FastAPI reference](https://api.bailout.dev/docs)
 

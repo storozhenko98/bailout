@@ -31,7 +31,7 @@ what changed, back up the config, repair it, and verify that your main tool work
 
 **A quick exit.** The useful outcome is your usual setup working again. Bailout has
 no daemon, account setup, persistent conversation store, or project scaffolding.
-It is one native binary, about 0.6 MB on Apple Silicon; every release stays under
+It is one native binary: **604.7 KB on Apple Silicon** in v0.3.0. Every release stays under
 6,000,000 bytes. Linux releases are statically linked with musl.
 
 ```text
@@ -157,6 +157,16 @@ free does not mean zero data retention. The Worker does not store conversations 
 log request bodies. Worker observability is disabled. Do not include credentials in
 prompts or ask the agent to read secret files.
 
+## Measured release sizes
+
+From the [published v0.3.0 assets](https://github.com/storozhenko98/bailout/releases/tag/v0.3.0), verified against SHA-256 checksums:
+
+| Platform | Native binary (uncompressed) | Download (.tar.gz) |
+| --- | ---: | ---: |
+| macOS ARM64 | 604,704 bytes | 300,607 bytes |
+| Linux x64 | 807,712 bytes | 398,440 bytes |
+| Linux ARM64 | 725,248 bytes | 378,528 bytes |
+
 ## Build and test
 
 ```sh
@@ -206,7 +216,8 @@ is inspired by [neobrutalism.dev](https://www.neobrutalism.dev/).
 ## Host your own router
 
 Use Python 3.13+, uv 0.12.3+, and Node (for Wrangler). Choose your own Worker name
-in `api/wrangler.jsonc` before deploying.
+in `api/wrangler.jsonc` before deploying. Replace its custom-domain route with
+your own domain, or remove `routes` to use the generated workers.dev address.
 
 The Python API needs **Workers Paid** on Cloudflare. Its JSON processing and
 streaming exceed the Free plan's 10 ms CPU allowance; requests can otherwise be

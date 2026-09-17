@@ -16,3 +16,7 @@
 .terminal-checklist{display:flex;flex-direction:column;gap:5px;color:var(--green);margin-top:24px}.hero h1{font-size:clamp(58px,5.15vw,76px)}.demo-caption{max-width:145px;text-align:right;line-height:1.6}.hero .eyebrow{letter-spacing:.04em;font-size:11px}.hero .intro{max-width:490px}.install-caption{font-size:11px}
 @media(max-width:1000px){.hero h1{font-size:52px}.hero{grid-template-columns:1fr 1fr;gap:4%}}
 @media(max-width:760px){.hero h1{font-size:clamp(46px,11.8vw,70px)}.hero .eyebrow{font-size:10px}.demo-caption{max-width:none}.demo-label{align-items:center}.hero{gap:46px}.hero .intro{font-size:19px}.install-caption{font-size:10px}.hero .terminal-checklist{font-size:11px}}
+
+.size-fact>span{font-size:11px;line-height:1.5}.faq-list details a{text-decoration:underline;text-underline-offset:3px}@media(max-width:760px){.facts .size-fact{flex-direction:column;gap:2px}.facts .size-fact b{font-size:24px}.size-fact>span{text-align:center;font-size:10px}}
+
+.size-table th{min-width:0}@media(max-width:760px){.size-table td,.size-table th{font-size:12px;padding:12px 6px}}
