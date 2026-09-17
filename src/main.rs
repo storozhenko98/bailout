@@ -255,7 +255,28 @@ fn api(base: &str, path: &str, body: Option<Value>) -> Result<Value> {
 }
 
 fn stream_chat(base: &str, body: Value) -> Result<Value> {
-    stream_chat_attempt(base, body, true)
+    match stream_chat_attempt(base, body.clone(), true) {
+        Err(e)
+            if !CANCELLED.load(Ordering::SeqCst)
+                && e == "Model connection closed early. No commands were run." =>
+        {
+            // No validated tool call was dispatched. Recover this one response
+            // through the non-streaming endpoint, with fresh pricing checks.
+            ui::note("Stream interrupted. Recovering a complete response…");
+            let mut retry = body;
+            retry["stream"] = json!(false);
+            let waiting = ui::Spinner::new("Recovering response");
+            let result = api(base, "/v1/chat", Some(retry))?;
+            drop(waiting);
+            if let Some(text) = result["message"]["content"].as_str() {
+                let mut printer = ui::StreamAnswer::new();
+                printer.push(text);
+                printer.finish();
+            }
+            Ok(result)
+        }
+        result => result,
+    }
 }
 
 fn stream_chat_attempt(base: &str, payload: Value, retry_gateway: bool) -> Result<Value> {

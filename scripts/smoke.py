@@ -63,11 +63,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             message = dict(role='assistant', content='Reply: '+prompt)
         response = dict(model='test/coder:free', message=message)
         if not body.get('stream'):
+            if prompt == 'broken stream':
+                self.send_response(503); self.end_headers(); return
             return self.send_json(response)
         events = [dict(type='model', model=response['model'])]
         if message.get('content'):
             events.extend(dict(type='text', text=chunk) for chunk in [message['content'][:4], message['content'][4:]])
-        if prompt != 'broken stream': events.append(dict(type='done', **response))
+        if prompt not in ('broken stream', 'recover stream'): events.append(dict(type='done', **response))
         raw = ''.join(json.dumps(e)+'\n' for e in events).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'application/x-ndjson')
@@ -138,6 +140,9 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
     gateway = run('gateway retry')
     assert gateway.returncode == 0 and 'Reply: gateway retry' in gateway.stdout
     assert gateway_failures == 1
+    recovered = run('recover stream')
+    assert recovered.returncode == 0 and 'Reply: recover stream' in recovered.stdout
+    assert 'Recovering a complete response' in recovered.stderr
     broken = run('broken stream')
     assert broken.returncode == 1 and not pathlib.Path(folder, 'hello.txt').exists()
     result = run('create hello.txt')
