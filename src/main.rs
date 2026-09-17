@@ -466,6 +466,8 @@ fn system() -> Value {
         commands afterward to verify success. When finished, explain what works, what still needs \
         the user's action, and how to launch their normal tools. Mention bailout uninstall when it is \
         no longer needed, but never remove bailout without an explicit request. \
+        For removal, recommend only the exact built-in command: bailout uninstall. \
+        Never suggest rm, recursive deletion, or deleting an install directory to remove bailout. \
         Answer questions and conversation directly. For tasks involving files or commands, \
         call the bash tool yourself to do the work. You cannot create, inspect, edit, or verify \
         a file by writing an answer. Only actual tool results establish that an action happened. \
