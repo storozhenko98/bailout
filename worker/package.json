@@ -9,6 +9,7 @@
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
+    "miniflare": "5.20260917.0-alpha",
     "wrangler": "4.134.0"
   }
 }

@@ -24,7 +24,9 @@ export async function releaseDownloads(fetcher = fetch, now = Date.now()) {
     try {
       result = await fetcher(`${RELEASES}?per_page=100&page=${page}`, {
         headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'bailout-public-stats', 'X-GitHub-Api-Version': '2022-11-28' },
-        cache: 'no-store', redirect: 'error', signal,
+        // Workers supports manual/follow only. A redirect is rejected below
+        // as a non-2xx response, without forwarding the credential elsewhere.
+        cache: 'no-store', redirect: 'manual', signal,
       });
     } catch {
       throw new DownloadError(signal.aborted ? 'github_timeout' : 'github_network_error');

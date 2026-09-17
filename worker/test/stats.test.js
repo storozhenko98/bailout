@@ -192,7 +192,7 @@ test('dedicated GitHub authentication stays on the fixed source and out of stati
     assert.equal(new URL(url).origin, 'https://api.github.com');
     assert.equal(new URL(url).pathname, '/repos/storozhenko98/bailout/releases');
     assert.equal(options.headers.Authorization, `Bearer ${token}`);
-    assert.equal(options.redirect, 'error', 'credentials must never follow a redirect');
+    assert.equal(options.redirect, 'manual', 'credentials must never follow a redirect');
     return Response.json([{ assets: [asset(1, 19)] }]);
   }, token);
   await stats.refresh(start);
