@@ -3,12 +3,18 @@ import asyncio
 import codecs
 import json
 import re
+from contextlib import aclosing
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from time import monotonic
 
 ORIGIN = "https://openrouter.ai/api/v1"
 MODEL_ID = re.compile(r"^[\w.-]+/[\w.-]+:free$")
 MAX_BODY = 512_000
+REQUEST_SECONDS = 120
+AUTO_ATTEMPT_SECONDS = 40
+PINNED_ATTEMPT_SECONDS = 90
+COOLDOWN_SECONDS = 300
 BASH_TOOL = {
     "type": "function",
     "function": {
@@ -30,9 +36,56 @@ BASH_TOOL = {
 
 
 class Failure(Exception):
-    def __init__(self, status, message):
+    def __init__(self, status, message, *, code="request_failed", recoverable=None):
         self.status, self.message = status, message
+        self.code = code
+        self.recoverable = status in (502, 504) if recoverable is None else recoverable
+        self.failed_models = []
+        self.retry_after_seconds = None
         super().__init__(message)
+
+    def payload(self):
+        result = {"error": self.message, "code": self.code, "failed_models": self.failed_models,
+                  "cooldown_seconds": max(COOLDOWN_SECONDS, self.retry_after_seconds or 0)}
+        if self.retry_after_seconds is not None:
+            result["retry_after_seconds"] = self.retry_after_seconds
+        return result
+
+
+def upstream_failure(status, result):
+    """Classify without exposing or storing provider bodies (which can echo prompts)."""
+    error = result.get("error", {}) if isinstance(result, dict) else {}
+    if not isinstance(error, dict):
+        error = {}
+    metadata = error.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    kind = metadata.get("error_type")
+    code = error.get("code")
+    if isinstance(code, int):
+        status = code
+    if status == 401 or kind == "authentication":
+        return Failure(503, "OpenRouter could not authenticate the hosted service. Try again later.", code="upstream_authentication", recoverable=False)
+    if status == 402 or kind in {"payment_required", "token_limit_exceeded"}:
+        return Failure(503, "OpenRouter's account allowance is exhausted. No paid fallback was used.", code="upstream_quota", recoverable=False)
+    if status == 403 or kind in {"permission_denied", "content_policy_violation", "refusal"}:
+        return Failure(503, "OpenRouter or the provider blocked this request under its access or content policy. No model switch was attempted.", code="upstream_policy", recoverable=False)
+    if status == 429 or kind == "rate_limit_exceeded":
+        # Unknown scope fails closed. Only a clearly provider-scoped limit can
+        # justify trying another model; account/key/daily limits must not be retried.
+        source = str(metadata.get("limit_source", "")).lower()
+        scope = str(metadata.get("scope", "")).lower()
+        message = str(error.get("message", "")).lower()
+        global_limit = (source.startswith("openrouter") or scope in {"account", "key", "global"}
+                        or any(s in message for s in ("daily", "per day", "per-day", "account", "api key", "credits")))
+        provider_limit = (bool(metadata.get("provider_name")) and not global_limit
+                          and source in {"", "provider", "provider_rate_limit"} and scope in {"", "provider", "model"})
+        return Failure(429, "The provider is busy." if provider_limit else "OpenRouter's shared rate limit was reached. Wait before retrying.",
+                       code="provider_rate_limited" if provider_limit else "upstream_rate_limited", recoverable=provider_limit)
+    if kind in {"invalid_request", "invalid_prompt", "context_length_exceeded", "string_too_long", "payload_too_large"} or status in (400, 413, 422):
+        return Failure(400, "The model could not accept this conversation. Try a smaller task or /new.", code="invalid_model_request", recoverable=False)
+    retry = status in (404, 408, 500, 502, 503, 504) or kind in {"timeout", "provider_overloaded", "provider_unavailable", "server"}
+    return Failure(502, "The provider could not complete the response.", code="provider_unavailable", recoverable=retry)
 
 
 def zero(value):
@@ -106,13 +159,21 @@ def ability(model):
 
 
 def validate(data):
-    if not isinstance(data, dict) or set(data) - {"model", "messages", "stream"}:
-        raise Failure(400, "Only model, messages, and stream are accepted.")
+    if not isinstance(data, dict) or set(data) - {"model", "messages", "stream", "preferred_model", "avoid_models"}:
+        raise Failure(400, "Unsupported request field.")
     model = data.get("model", "auto")
     if not isinstance(model, str) or (model != "auto" and not MODEL_ID.fullmatch(model)):
         raise Failure(400, "Choose auto or an explicit :free model.")
     if not isinstance(data.get("stream", False), bool):
         raise Failure(400, "stream must be a boolean.")
+    preferred = data.get("preferred_model")
+    avoid = data.get("avoid_models", [])
+    if preferred is not None and (not isinstance(preferred, str) or not MODEL_ID.fullmatch(preferred)):
+        raise Failure(400, "preferred_model must be an explicit :free model.")
+    if not isinstance(avoid, list) or len(avoid) > 35 or any(not isinstance(m, str) or not MODEL_ID.fullmatch(m) for m in avoid):
+        raise Failure(400, "avoid_models must contain at most 35 explicit :free models.")
+    if model != "auto" and (preferred is not None or avoid):
+        raise Failure(400, "Routing preferences apply only to auto. A pinned model stays pinned.")
     messages = data.get("messages")
     if not isinstance(messages, list) or not 1 <= len(messages) <= 256:
         raise Failure(400, "Expected 1–256 messages. Use /new for a fresh conversation.")
@@ -146,7 +207,8 @@ def validate(data):
             raise Failure(400, "Invalid reasoning details.")
     if pending:
         raise Failure(400, "Missing tool results.")
-    return {"model": model, "messages": messages, "stream": data.get("stream", False)}
+    return {"model": model, "messages": messages, "stream": data.get("stream", False),
+            "preferred_model": preferred, "avoid_models": avoid}
 
 
 async def read_json(response, limit=8_000_000):
@@ -157,7 +219,10 @@ async def read_json(response, limit=8_000_000):
             if len(raw) > limit:
                 raise Failure(502, "Upstream response is too large.")
     finally:
-        await response.close()
+        try:
+            await response.close()
+        except Exception:
+            pass
     try:
         return json.loads(raw, parse_float=Decimal)
     except (ValueError, UnicodeDecodeError):
@@ -165,14 +230,24 @@ async def read_json(response, limit=8_000_000):
 
 
 def check_message(result):
+    if not isinstance(result, dict):
+        raise Failure(502, "Invalid model response.")
     if result.get("usage", {}).get("cost") is not None and not zero(result["usage"]["cost"]):
-        raise Failure(502, "Unexpected upstream cost. Stopped; investigate the provider.")
+        raise Failure(502, "Unexpected upstream cost. Stopped; investigate the provider.", code="unexpected_cost", recoverable=False)
+    if result.get("error"):
+        raise upstream_failure(502, result)
     choices = result.get("choices") or []
     if not choices:
         raise Failure(502, "The model returned no response. Try another free model.")
     choice = choices[0]
+    if choice.get("error"):
+        raise upstream_failure(502, choice)
+    if choice.get("finish_reason") in ("content_filter", "refusal") or choice.get("message", {}).get("refusal"):
+        raise upstream_failure(403, {})
     if choice.get("finish_reason") == "length":
-        raise Failure(502, "Model response was cut short. Try a smaller task or another model.")
+        raise Failure(502, "Model response reached its length limit. Try a smaller task or /new.", code="response_too_long", recoverable=False)
+    if choice.get("finish_reason") not in ("stop", "tool_calls"):
+        raise Failure(502, "The model did not finish its response.")
     message = choice.get("message", {})
     if message.get("role") != "assistant" or (message.get("content") is not None and not isinstance(message["content"], str)):
         raise Failure(502, "Invalid model response.")
@@ -210,14 +285,23 @@ def check_message(result):
 class Router:
     def __init__(self, transport, key):
         self.transport, self.key = transport, key
+        self.deadline = None
+
+    def remaining(self):
+        remaining = self.deadline - monotonic() if self.deadline is not None else REQUEST_SECONDS
+        if remaining <= 0:
+            raise Failure(504, "Recovery time limit reached. Try again later.", code="recovery_exhausted", recoverable=False)
+        return remaining
 
     async def metadata(self, path):
         try:
-            response = await self.transport.request(ORIGIN + path, headers={"Cache-Control": "no-cache, no-store"}, timeout=12)
-            if response.status != 200:
-                await response.close()
-                raise Failure(503, "Live free pricing is unavailable. Try again shortly.")
-            return await read_json(response)
+            timeout = min(12, self.remaining())
+            async with asyncio.timeout(timeout):
+                response = await self.transport.request(ORIGIN + path, headers={"Cache-Control": "no-cache, no-store"}, timeout=timeout)
+                if response.status != 200:
+                    await response.close()
+                    raise Failure(503, "Live free pricing is unavailable. Try again shortly.", code="pricing_unavailable", recoverable=False)
+                return await read_json(response)
         except Failure:
             raise
         except Exception:
@@ -261,61 +345,149 @@ class Router:
                 "provider": {"only": list(dict.fromkeys(e["tag"] for e in endpoints)), "allow_fallbacks": False,
                              "require_parameters": True, "max_price": {"prompt": 0, "completion": 0, "request": 0, "image": 0}}}
 
-    async def open_completion(self, data):
+    async def prepare(self, data):
+        self.deadline = monotonic() + REQUEST_SECONDS
         if not self.key:
             raise Failure(503, "The hosted service is not configured.")
         catalog = await self.catalog()
-        candidates = catalog[:35] if data["model"] == "auto" else [m for m in catalog if m["id"] == data["model"]]
+        if data["model"] == "auto":
+            candidates = [m for m in catalog if m["id"] not in data.get("avoid_models", [])]
+            preferred = data.get("preferred_model")
+            candidates.sort(key=lambda m: m["id"] != preferred)  # stable ability order
+            candidates = candidates[:35]
+        else:
+            candidates = [m for m in catalog if m["id"] == data["model"]]
         if not candidates:
-            raise Failure(503, "This model is no longer verified free. Choose another with /model.")
-        attempts, last_status = 0, 503
-        for model in candidates:
-            if attempts >= 3:
-                break
-            if attempts:
-                model = next((m for m in await self.catalog() if m["id"] == model["id"]), None)
-                if not model:
+            raise Failure(503, "No eligible free model is available. Wait for recovery or choose another with /model.", code="no_free_models")
+        return candidates
+
+    async def completion_events(self, data, candidates):
+        attempts, failed = 0, []
+        cooldown = COOLDOWN_SECONDS
+        auto = data["model"] == "auto"
+        last = Failure(503, "No healthy verified-free provider is available. Try again later.", code="no_free_models")
+        try:
+            for candidate in candidates:
+                self.remaining()
+                if attempts >= 3:
+                    break
+                # The initial catalog is fresh for attempt one. Every fallback
+                # gets a new catalog AND endpoint check, including session hints.
+                model = candidate if attempts == 0 else next((m for m in await self.catalog() if m["id"] == candidate["id"]), None)
+                if model is None:
                     continue
-            try:
                 live = await self.endpoints(model)
-            except Failure:
-                continue
-            if not live:
-                continue
-            attempts += 1
-            try:
-                response = await self.transport.request(ORIGIN + "/chat/completions", method="POST", timeout=90,
-                    headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json",
-                             "HTTP-Referer": "https://bailout.dev", "X-OpenRouter-Title": "bailout"},
-                    body=json.dumps(self.body(model, live, data["messages"], data["stream"])))
-            except Exception:
-                raise Failure(504, "The model timed out. Try again or choose another with /model.") from None
-            if response.status == 200:
-                return model["id"], response
-            last_status = response.status
-            await response.close()
-            if last_status in (401, 402, 403):
-                raise Failure(503, "OpenRouter rejected the service key or account policy. No paid fallback was used.")
-            if last_status not in (404, 408, 429, 500, 502, 503, 504):
-                break
-        raise Failure(429 if last_status == 429 else 503,
-                      "Free capacity is busy. Try again shortly or use /model to choose another. Paid models are never used.")
+                if not live:
+                    continue
+                attempts += 1
+                response = None
+                completed = None
+                timeout = min(AUTO_ATTEMPT_SECONDS if auto else PINNED_ATTEMPT_SECONDS, self.remaining())
+                messages = data["messages"]
+                if attempts > 1 or (auto and data.get("preferred_model") not in (None, model["id"])):
+                    # Provider-specific reasoning signatures cannot be transferred
+                    # to another model. Keep every user message and completed tool result.
+                    messages = [{k: v for k, v in m.items() if k != "reasoning_details"} for m in messages]
+                yield {"type": "model", "model": model["id"], "attempt": attempts}
+                try:
+                    async with asyncio.timeout(timeout):
+                        response = await self.transport.request(ORIGIN + "/chat/completions", method="POST", timeout=timeout,
+                            headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json",
+                                     "HTTP-Referer": "https://bailout.dev", "X-OpenRouter-Title": "bailout"},
+                            body=json.dumps(self.body(model, live, messages, data["stream"])))
+                        if response.status != 200:
+                            status = response.status
+                            if status in (400, 401, 402, 403, 413, 422):
+                                raise upstream_failure(status, {})
+                            try:
+                                error = await read_json(response, 64_000)
+                            except Failure:
+                                error = {}
+                            failure = upstream_failure(status, error)
+                            retry_after = getattr(response, "retry_after", None)
+                            if isinstance(retry_after, str) and retry_after.isdigit():
+                                failure.retry_after_seconds = min(int(retry_after), 86400)
+                            raise failure
+                        if data["stream"]:
+                            async for item in self.read_stream(model["id"], response):
+                                if item["type"] == "done":
+                                    completed = item
+                                else:
+                                    yield item
+                        else:
+                            result = await read_json(response, 2_000_000)
+                            message = check_message(result)
+                            completed = {"type": "done", "model": model["id"], "message": message,
+                                   "usage": {"cost": 0 if result.get("usage", {}).get("cost") is not None else None},
+                                   "checked_at": now()}
+                except Failure as exc:
+                    last = exc
+                except TimeoutError:
+                    last = upstream_failure(429, {}) if response is not None and response.status == 429 else Failure(504, "The model did not respond in time.", code="provider_timeout")
+                except Exception:
+                    last = upstream_failure(429, {}) if response is not None and response.status == 429 else Failure(502, "The provider connection failed or returned an invalid response.", code="provider_unavailable")
+                finally:
+                    if response is not None:
+                        try:
+                            await response.close()
+                        except Exception:
+                            pass
+                if completed is not None:
+                    completed.update(failed_models=failed, cooldown_seconds=cooldown)
+                    yield completed
+                    return
+                if not last.recoverable:
+                    raise last
+                failed.append(model["id"])
+                cooldown = max(cooldown, last.retry_after_seconds or 0)
+                if not auto:
+                    raise Failure(last.status, last.message + " Your selected model is unchanged. Use /model auto for automatic recovery.", code=last.code, recoverable=False)
+                if attempts < 3:
+                    # A model event with additive fields remains readable by v0.4.
+                    # Clients must discard partial text/tool calls from this attempt.
+                    yield {"type": "model", "model": model["id"], "retry": True,
+                           "notice": f"{model['id']} failed. Trying another free model…",
+                           "failed_models": failed.copy(), "cooldown_seconds": cooldown}
+            raise Failure(503, f"Automatic recovery stopped after {attempts} model attempt(s). No working free model was found. Try again later.",
+                          code="recovery_exhausted", recoverable=False) if attempts else last
+        except Failure as exc:
+            exc.failed_models = failed
+            if failed:
+                exc.retry_after_seconds = max(exc.retry_after_seconds or 0, cooldown)
+            raise
 
     async def chat(self, data):
-        model, response = await self.open_completion(data)
-        result = await read_json(response, 2_000_000)
-        if result.get("error"):
-            raise Failure(502, "The provider could not finish this request. Try another model.")
-        message = check_message(result)
-        return {"model": model, "message": message, "usage": {"cost": 0 if result.get("usage", {}).get("cost") is not None else None}, "checked_at": now()}
+        candidates = await self.prepare(data)
+        async with aclosing(self.completion_events(data, candidates)) as events:
+            async for item in events:
+                if item["type"] == "done":
+                    return {k: v for k, v in item.items() if k != "type"}
+
+    async def stream_chat(self, data, candidates):
+        try:
+            async with aclosing(self.completion_events(data, candidates)) as events:
+                async for item in events:
+                    yield event(item)
+        except Failure as exc:
+            yield event({"type": "error", **exc.payload()})
 
     async def stream(self, model, response):
+        """Single-attempt stream adapter, also used by protocol tests."""
+        try:
+            yield event({"type": "model", "model": model})
+            async for item in self.read_stream(model, response):
+                yield event(item)
+        except Failure as exc:
+            yield event({"type": "error", **exc.payload()})
+        except Exception:
+            yield event({"type": "error", "error": "Invalid model stream. No commands were run."})
+
+    async def read_stream(self, model, response):
         """Forward real text deltas; execute tools only after a validated final event."""
         message = {"role": "assistant", "content": ""}
         calls, reasoning, usage = {}, {}, {}
         finish, ended, size, buffer = None, False, 0, ""
         decoder = codecs.getincrementaldecoder("utf-8")()
-        yield event({"type": "model", "model": model})
         try:
             async for chunk in response.chunks():
                 size += len(chunk)
@@ -334,16 +506,22 @@ class Router:
                         continue
                     frame = json.loads(payload, parse_float=Decimal)
                     if frame.get("error"):
-                        raise Failure(502, "The provider interrupted the response. Try again or use /model.")
+                        raise upstream_failure(502, frame)
                     if frame.get("usage"):
                         usage = frame["usage"]
+                        if usage.get("cost") is not None and not zero(usage["cost"]):
+                            raise Failure(502, "Unexpected upstream cost. Stopped; investigate the provider.", code="unexpected_cost", recoverable=False)
                     for choice in frame.get("choices", [])[:1]:
                         finish = choice.get("finish_reason") or finish
+                        if choice.get("error"):
+                            raise upstream_failure(502, choice)
                         delta = choice.get("delta") or {}
+                        if delta.get("refusal"):
+                            raise upstream_failure(403, {})
                         text = delta.get("content")
                         if isinstance(text, str) and text:
                             message["content"] += text
-                            yield event({"type": "text", "text": text})
+                            yield {"type": "text", "text": text}
                         for call in delta.get("tool_calls") or []:
                             index = call.get("index")
                             if not isinstance(index, int) or not 0 <= index < 16:
@@ -373,13 +551,12 @@ class Router:
                 message["reasoning_details"] = list(reasoning.values())
             result = {"choices": [{"message": message, "finish_reason": finish}], "usage": usage}
             checked = check_message(result)
-            yield event({"type": "done", "model": model, "message": checked, "usage": {"cost": 0 if usage.get("cost") is not None else None}, "checked_at": now()})
-        except Failure as exc:
-            yield event({"type": "error", "error": exc.message})
-        except Exception:
-            yield event({"type": "error", "error": "The model connection failed. No commands were run. Try again or use /model."})
+            yield {"type": "done", "model": model, "message": checked, "usage": {"cost": 0 if usage.get("cost") is not None else None}, "checked_at": now()}
         finally:
-            await response.close()
+            try:
+                await response.close()
+            except Exception:
+                pass
 
 
 def event(value):

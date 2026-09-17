@@ -37,7 +37,7 @@ It is one native binary: **622.0 KB on Apple Silicon** in v0.4.0. Every release 
 ```text
 $ bailout
 
-  bailout v0.4.0
+  bailout v0.5.0
   ~
 
   › auto · free models · full access
@@ -125,7 +125,8 @@ For **every model request**, including subsequent agent steps and fallback attem
 3. Send only the exact verified provider endpoints with `allow_fallbacks: false`,
    `require_parameters: true`, and a hard zero `max_price` for prompt, completion,
    request, and image charges. This cap also covers the gap between checking and sending.
-4. On provider errors, `auto` can try at most three independently checked free models.
+4. Auto recovers from provider failures, timeouts, broken streams and invalid responses
+   with at most three independently checked free models within 120 seconds.
    An explicitly selected model stays pinned. No paid model fallback exists.
 5. Reject arbitrary routing overrides, provider keys, plugins, multimodal content,
    and tools other than Bash. Audit returned costs and reject unexpected nonzero costs.
@@ -139,6 +140,16 @@ coding specialists, reasoning support, coding evaluation mentions, and useful co
 lengths; small variants and models described as unsuitable for coding are deprioritized.
 Only models with healthy verified-free endpoints are eligible for automatic selection.
 The list includes the score and reasons so the preference is inspectable and replaceable.
+“Available” means the public provider metadata passes these checks; it does not
+guarantee the shared account can complete a request.
+
+Auto remembers the working model for the terminal session and avoids failed models
+for five minutes (longer if the provider asks). Each attempt checks prices again.
+Recovery preserves completed Bash results and never replays those commands. Partial
+tool calls are discarded. The terminal announces model recovery; after the attempt
+or time limit it stops with an explanation. Account quotas, access/content policies,
+unknown pricing and the hosting cutoff stop recovery immediately. No session IDs,
+prompt logs or additional telemetry are introduced. See [recovery and the API protocol](docs/model-recovery.md).
 
 Free capacity is **shared and best effort**. OpenRouter's account quota and provider
 availability still apply. HTTP 429 means wait or choose another available free model;
@@ -259,9 +270,13 @@ For edge development, place it in a gitignored `.dev.vars` file and run
 `uv run pywrangler dev`. For ordinary local FastAPI development, set the key in
 your environment and run `uv run uvicorn app:app --app-dir src --reload`.
 The API exposes `/health`, `/v1/models`, `/v1/chat`, `/docs`, and `/openapi.json`.
-Chat accepts `{model, messages, stream}`. With `stream: true`, it returns NDJSON
+Chat accepts `{model, messages, stream}` and optional Auto-only `preferred_model`
+and `avoid_models` session hints. With `stream: true`, it returns NDJSON
 `model`, `text`, and `done` events, or an `error` event. Only the `done` event
 contains a validated message that is safe to pass to the tool dispatcher.
+An additive `retry: true` field on a `model` event marks a discarded attempt;
+clients should separate its partial text from the new response. The complete
+conversation message comes only from `done`, never concatenated text deltas.
 
 Deploy the guard with `npm ci && npx wrangler deploy --config gateway.wrangler.jsonc`
 in `worker`. To deploy the site, point the service binding in `worker/wrangler.jsonc`

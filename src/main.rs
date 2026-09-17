@@ -1,4 +1,5 @@
 mod local;
+mod routing;
 mod ui;
 mod update;
 
@@ -255,33 +256,7 @@ fn api(base: &str, path: &str, body: Option<Value>) -> Result<Value> {
     Ok(result)
 }
 
-fn stream_chat(base: &str, body: Value) -> Result<Value> {
-    match stream_chat_attempt(base, body.clone(), true) {
-        Err(e)
-            if !CANCELLED.load(Ordering::SeqCst)
-                && (e == "Model connection closed early. No commands were run."
-                    || e.starts_with("Transport failed: curl: (18)")) =>
-        {
-            // No validated tool call was dispatched. Recover this one response
-            // through the non-streaming endpoint, with fresh pricing checks.
-            ui::note("Stream interrupted. Recovering a complete response…");
-            let mut retry = body;
-            retry["stream"] = json!(false);
-            let waiting = ui::Spinner::new("Recovering response");
-            let result = api(base, "/v1/chat", Some(retry))?;
-            drop(waiting);
-            if let Some(text) = result["message"]["content"].as_str() {
-                let mut printer = ui::StreamAnswer::new();
-                printer.push(text);
-                printer.finish();
-            }
-            Ok(result)
-        }
-        result => result,
-    }
-}
-
-fn stream_chat_attempt(base: &str, payload: Value, retry_gateway: bool) -> Result<Value> {
+fn stream_chat(base: &str, payload: Value, routing: &mut routing::Routing) -> Result<Value> {
     let mut cmd = Command::new("curl");
     cmd.args([
         "-q",
@@ -312,6 +287,18 @@ fn stream_chat_attempt(base: &str, payload: Value, retry_gateway: bool) -> Resul
         while let Some(end) = pending.iter().position(|b| *b == b'\n') {
             let line: Vec<u8> = pending.drain(..=end).collect();
             if let Ok(event) = serde_json::from_slice::<Value>(&line) {
+                routing.observe(&event);
+                if event["type"] == "model" && event["retry"] == true {
+                    waiting.take();
+                    printer.finish();
+                    printer = ui::StreamAnswer::new();
+                    ui::note(&clean(
+                        event["notice"]
+                            .as_str()
+                            .unwrap_or("Trying another free model…"),
+                    ));
+                    waiting = Some(ui::Spinner::new("Recovering response"));
+                }
                 if event["type"] == "text" {
                     if let Some(text) = event["text"].as_str() {
                         waiting.take();
@@ -346,21 +333,7 @@ fn stream_chat_attempt(base: &str, payload: Value, retry_gateway: bool) -> Resul
         .ok_or("Invalid HTTP response")?;
     if code != "200" {
         let value: Value = serde_json::from_str(body).unwrap_or(Value::Null);
-        // Retry one gateway failure before any validated command was received.
-        // Service policy errors and rate limits retain their original response.
-        if retry_gateway
-            && matches!(code, "502" | "503" | "504")
-            && value["error"].as_str().is_none()
-        {
-            ui::note("Service connection interrupted. Retrying once…");
-            for _ in 0..50 {
-                if CANCELLED.load(Ordering::SeqCst) {
-                    return Err("Interrupted.".into());
-                }
-                thread::sleep(Duration::from_millis(20));
-            }
-            return stream_chat_attempt(base, payload, false);
-        }
+        routing.observe(&value);
         return Err(value["error"]
             .as_str()
             .map(str::to_string)
@@ -520,10 +493,19 @@ fn repair_pending(messages: &mut Vec<Value>) {
     }
 }
 
+fn clear_reasoning(messages: &mut [Value]) {
+    for message in messages {
+        if let Some(object) = message.as_object_mut() {
+            object.remove("reasoning_details");
+        }
+    }
+}
+
 fn turn(
     base: &str,
     model: &str,
     messages: &mut Vec<Value>,
+    routing: &mut routing::Routing,
     prompt: &str,
     max_steps: usize,
 ) -> Result<()> {
@@ -535,17 +517,23 @@ fn turn(
             return Err("Interrupted.".into());
         }
         trim_history(messages)?;
-        let response = stream_chat(
-            base,
-            json!({"model":model, "messages":messages, "stream":true}),
-        )?;
+        let mut body = json!({"model":model, "messages":messages, "stream":true});
+        routing.hints(&mut body);
+        let response = stream_chat(base, body, routing)?;
         let actual = response["model"]
             .as_str()
             .ok_or("Missing model in server response")?;
         if !actual.ends_with(":free") {
             return Err("Server returned a non-free model. Stopped.".into());
         }
+        if model != "auto" && actual != model {
+            return Err("Server changed the pinned model. Stopped before running commands.".into());
+        }
+        if model == "auto" {
+            routing.success(actual);
+        }
         if actual != last_model {
+            clear_reasoning(messages);
             if !last_model.is_empty() {
                 ui::note(&format!("Switched to {actual}"));
             }
@@ -749,11 +737,13 @@ fn run() -> Result<()> {
     model = select_model(&model, &[])?;
     update::startup()?;
     let mut messages = vec![system()];
+    let mut routing = routing::Routing::default();
     if i < args.len() {
         return turn(
             &base,
             &model,
             &mut messages,
+            &mut routing,
             &args[i..].join(" "),
             max_steps,
         );
@@ -767,7 +757,14 @@ fn run() -> Result<()> {
         if input.trim().is_empty() {
             return Err("No prompt on stdin.".into());
         }
-        return turn(&base, &model, &mut messages, &input, max_steps);
+        return turn(
+            &base,
+            &model,
+            &mut messages,
+            &mut routing,
+            &input,
+            max_steps,
+        );
     }
     ui::welcome(VERSION, &model);
     let mut editor = ui::editor()?;
@@ -813,6 +810,9 @@ fn run() -> Result<()> {
                     if let ui::Input::Text(choice) = ui::read(&mut editor, true)? {
                         match select_model(choice.trim(), &ids) {
                             Ok(value) => {
+                                if model != value {
+                                    clear_reasoning(&mut messages);
+                                }
                                 model = value;
                                 ui::note(&format!("Model: {model}"));
                             }
@@ -824,6 +824,9 @@ fn run() -> Result<()> {
             }
             _ if line.starts_with("/model ") => match select_model(line[7..].trim(), &ids) {
                 Ok(value) => {
+                    if model != value {
+                        clear_reasoning(&mut messages);
+                    }
                     model = value;
                     ui::note(&format!("Model: {model}"));
                 }
@@ -832,7 +835,7 @@ fn run() -> Result<()> {
             _ if line.starts_with('/') => ui::note("Unknown command. Use /help."),
             _ => {
                 println!();
-                if let Err(e) = turn(&base, &model, &mut messages, line, max_steps) {
+                if let Err(e) = turn(&base, &model, &mut messages, &mut routing, line, max_steps) {
                     if CANCELLED.load(Ordering::SeqCst) {
                         ui::note("Stopped.");
                     } else {

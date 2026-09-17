@@ -80,13 +80,24 @@ is the earliest capacity return, not a promise that an entire session will fit.
 | 429 | `capacity_busy` | Shared capacity is busy; honor `Retry-After` and add jitter when retrying. |
 | 503 | `service_paused` | Operator pause; display the message and wait. |
 | 503 | `service_unavailable` | Capacity verification or backend connection failed; stop the current operation. |
-| 429 | `upstream_rate_limited` | OpenRouter's free capacity is unavailable; wait. This legacy backend error may omit a retry timestamp. |
+| 429 | `upstream_rate_limited` | Shared or unknown-scope OpenRouter limit; stop and honor `Retry-After` when supplied. |
+| 503 | `upstream_authentication` | Hosted service authentication failed; stop. |
+| 503 | `upstream_quota` | Account allowance exhausted; stop. Never enable paid routing. |
+| 503 | `upstream_policy` | Access or content policy blocked the request; stop without switching models. |
+| 503/504 | `recovery_exhausted` | Three attempts or 120 seconds exhausted; display the error and wait. |
+| 503 | `pricing_unavailable` / `no_free_models` | No safely eligible free route; stop. |
+| 502 | `unexpected_cost` | Cost audit failed; stop and investigate the provider. |
 
 `GET /v1/status` reports the conservative reservation counter and limits, never
 credentials or conversations. It also refuses when the allowance is exhausted.
 `GET /health` checks the gateway, not model availability. The CLI displays policy
 errors verbatim and does not automatically retry them. During streaming, only a
 validated `done` event authorizes executing tools; partial responses do not.
+After stream headers are sent, backend errors use an NDJSON `error` event under
+HTTP 200 with the same machine-readable codes. Do not treat HTTP 200 alone as a
+completed model response. Auto's internal provider retries share one admission
+and a maximum of three attempts / 120 seconds. The CLI does not resubmit a failed
+API request and multiply that budget. See [model recovery](model-recovery.md).
 
 ## Operator controls
 

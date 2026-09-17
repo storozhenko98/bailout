@@ -40,7 +40,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         calls.append(body)
         assert self.path == '/v1/chat'
-        assert body['model'] == 'auto'
+        assert body['model'] in ('auto', 'test/pinned:free')
+        if body['model'] != 'auto':
+            assert 'preferred_model' not in body and 'avoid_models' not in body
         prompt = next(m['content'] for m in reversed(body['messages']) if m['role'] == 'user')
         if prompt in ('budget exhausted', 'client limited'):
             self.send_response(503 if prompt == 'budget exhausted' else 429)
@@ -60,18 +62,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif prompt in ('local login', 'cancel login'):
             command = 'read -r -s -p "Local token: " token; test -n "$token"; printf "\\nLocal auth complete\\n"'
             message = dict(role='assistant', content=None, tool_calls=[dict(id='local_1', type='function', function=dict(name='bash', arguments=json.dumps(dict(command=command, interactive=True))))])
-        elif prompt in ('create hello.txt', 'wait bash', 'broken stream'):
+        elif prompt in ('create hello.txt', 'wait bash', 'broken stream', 'auto recovery', 'pinned mismatch'):
             command = "printf 'hello bailout\\n' > hello.txt; cat hello.txt"
             if prompt == 'wait bash': command = 'sleep 30 & echo $! > child.pid; wait'
+            if prompt in ('auto recovery', 'pinned mismatch'): command = "printf 'once\\n' >> recovery-count.txt"
             message = dict(role='assistant', content=None, tool_calls=[dict(id='call_1', type='function', function=dict(name='bash', arguments=json.dumps(dict(command=command))))])
         else:
             message = dict(role='assistant', content='Reply: '+prompt)
         response = dict(model='test/coder:free', message=message)
+        recovery_events = []
+        if prompt == 'auto recovery':
+            after_tool = body['messages'][-1]['role'] == 'tool'
+            response['model'] = 'test/c:free' if after_tool else 'test/b:free'
+            if after_tool:
+                assert body['preferred_model'] == 'test/b:free'
+                assert body['avoid_models'] == ['test/a:free']
+                assert len([m for m in body['messages'] if m['role'] == 'tool']) == 1
+                assert not any('Discarded partial' in (m.get('content') or '') for m in body['messages'])
+            failed = 'test/b:free' if after_tool else 'test/a:free'
+            recovery_events = [dict(type='text', text='Discarded partial response'),
+                               dict(type='model', model=failed, retry=True, notice='Trying another free model…', failed_models=[failed], cooldown_seconds=300)]
+        if prompt == 'after recovery':
+            assert body['preferred_model'] == 'test/c:free'
+            assert set(body['avoid_models']) == {'test/a:free','test/b:free'}
+
         if not body.get('stream'):
             if prompt == 'broken stream':
                 self.send_response(503); self.end_headers(); return
             return self.send_json(response)
-        events = [dict(type='model', model=response['model'])]
+        events = recovery_events + [dict(type='model', model=response['model'])]
         if message.get('content'):
             events.extend(dict(type='text', text=chunk) for chunk in [message['content'][:4], message['content'][4:]])
         if prompt not in ('broken stream', 'recover stream', 'truncated http'): events.append(dict(type='done', **response))
@@ -146,7 +165,7 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
     assert hello.returncode == 0 and hello.stdout == 'Reply: hello\n', (hello.stdout, hello.stderr)
     assert '$ ' not in hello.stderr
     gateway = run('gateway retry')
-    assert gateway.returncode == 0 and 'Reply: gateway retry' in gateway.stdout
+    assert gateway.returncode == 1, 'CLI must not multiply backend recovery attempts'
     assert gateway_failures == 1
     for prompt in ['budget exhausted', 'client limited']:
         before = len(calls)
@@ -155,13 +174,14 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
         assert 'https://bailout.dev/docs/#service-limits' in refused.stderr
         assert len(calls) == before + 1, 'Policy refusal was retried'
     recovered = run('recover stream')
-    assert recovered.returncode == 0 and 'Reply: recover stream' in recovered.stdout
-    assert 'Recovering a complete response' in recovered.stderr
+    assert recovered.returncode == 1 and 'No commands were run' in recovered.stderr
     truncated = run('truncated http')
-    assert truncated.returncode == 0 and 'Reply: truncated http' in truncated.stdout
-    assert 'Recovering a complete response' in truncated.stderr
+    assert truncated.returncode == 1, 'A transport interruption must not restart the entire recovery budget'
     broken = run('broken stream')
     assert broken.returncode == 1 and not pathlib.Path(folder, 'hello.txt').exists()
+    mismatch = subprocess.run([binary, '--model', 'test/pinned:free', 'pinned mismatch'], cwd=folder, env=env, capture_output=True, text=True, timeout=15)
+    assert mismatch.returncode == 1 and 'changed the pinned model' in mismatch.stderr
+    assert not pathlib.Path(folder, 'recovery-count.txt').exists()
     result = run('create hello.txt')
     assert result.returncode == 0, result.stderr
     assert pathlib.Path(folder, 'hello.txt').read_text() == 'hello bailout\n'
@@ -184,6 +204,14 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
     assert 'Created and verified' in fresh.stdout
     terminal = Terminal(folder)
     try:
+        terminal.prompt()
+        terminal.send('auto recovery\r')
+        terminal.expect('Trying another free model')
+        terminal.expect('Created and verified')
+        terminal.prompt()
+        assert pathlib.Path(folder, 'recovery-count.txt').read_text() == 'once\n'
+        terminal.send('after recovery\r')
+        terminal.expect('Reply: after recovery')
         terminal.prompt()
         terminal.send('discard this')
         terminal.expect('discard this')

@@ -1,16 +1,25 @@
-# bailout v0.4.0
+# bailout v0.5.0
 
-The harness meant to be deleted. Bootstrap a fresh Mac or Linux VM, or repair your broken coding setup, then hand back to your usual tools.
+The harness meant to be deleted. Bootstrap a fresh machine or repair your broken
+coding setup, then hand back to your usual tools.
 
-- Checks for a newer stable release at startup, verifies the checksum, replaces itself atomically and restarts. Failed checks retain the current installation. `BAILOUT_NO_UPDATE=1` opts out; `bailout update` checks manually.
-- Public API fair-use limits and a shared persistent hosting allowance. A documented `budget_exhausted` error pauses new work; the CLI displays it without automatic retries.
-- FastAPI stays on Cloudflare behind a private service binding and a global admission guard. Only verified free OpenRouter models are eligible.
+- Auto recovers from provider failures, timeouts, broken streams and invalid
+  responses, trying up to three verified-free models within 120 seconds.
+- Successful models stick for the terminal session. Failed models get a temporary
+  cooldown. The terminal announces recovery and preserves completed Bash work.
+- Explicit model selections stay pinned. Account limits, policy blocks, pricing
+  uncertainty and the hosting cutoff stop recovery with a clear error.
+- Every attempt still verifies free pricing; no paid fallback, credentials or
+  telemetry are added to the harness.
+
+Restart bailout v0.4+ to update automatically, or install:
 
 ```sh
 curl -fsSL https://bailout.dev/install.sh | bash
 bailout
 ```
 
-Older versions need this installer once to gain automatic updates. macOS ARM64, Linux x64 and Linux ARM64 only. No local API key, account, Git, Node or Python required. Bash is the only model tool and runs automatically with your permissions.
+macOS ARM64, Linux x64 and Linux ARM64. No local API key, account, Git, Node or
+Python needed. Bash is the only model tool and runs with your permissions.
 
-[Website](https://bailout.dev) · [Guide](https://bailout.dev/docs/) · [Limits and error contract](https://github.com/storozhenko98/bailout/blob/main/docs/service-limits.md)
+[Website](https://bailout.dev) · [Recovery behavior](https://github.com/storozhenko98/bailout/blob/main/docs/model-recovery.md) · [Guide](https://bailout.dev/docs/)
