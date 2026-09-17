@@ -31,7 +31,7 @@ what changed, back up the config, repair it, and verify that your main tool work
 
 **A quick exit.** The useful outcome is your usual setup working again. Bailout has
 no daemon, account setup, persistent conversation store, or project scaffolding.
-It is one native binary: **622.0 KB on Apple Silicon** in v0.4.0. Every release stays under
+It is one native binary: **638.6 KB on Apple Silicon** in v0.5.0. Every release stays under
 6,000,000 bytes. Linux releases are statically linked with musl.
 
 ```text
@@ -179,13 +179,13 @@ See [how the public counters work](docs/public-stats.md).
 
 ## Measured release sizes
 
-From the [published v0.4.0 assets](https://github.com/storozhenko98/bailout/releases/tag/v0.4.0), verified against SHA-256 checksums:
+From the [published v0.5.0 assets](https://github.com/storozhenko98/bailout/releases/tag/v0.5.0), verified against SHA-256 checksums:
 
 | Platform | Native binary (uncompressed) | Download (.tar.gz) |
 | --- | ---: | ---: |
-| macOS ARM64 | 622,048 bytes | 315,190 bytes |
-| Linux x64 | 840,480 bytes | 413,457 bytes |
-| Linux ARM64 | 790,784 bytes | 394,345 bytes |
+| macOS ARM64 | 638,592 bytes | 318,420 bytes |
+| Linux x64 | 844,576 bytes | 417,360 bytes |
+| Linux ARM64 | 790,784 bytes | 397,024 bytes |
 
 ## Build and test
 
@@ -220,7 +220,7 @@ CI runs the tests and real binary smoke checks on all three supported platforms.
 Tagging `vX.Y.Z` builds native release assets, tests them, enforces the size ceiling,
 and publishes SHA-256 checksums. The installer pins one resolved release version,
 verifies the archive checksum, checks its contents and binary size, then installs
-atomically. Set `BAILOUT_VERSION=v0.4.0` or `BAILOUT_INSTALL_DIR=/your/bin` to override.
+atomically. Set `BAILOUT_VERSION=v0.5.0` or `BAILOUT_INSTALL_DIR=/your/bin` to override.
 It prefers an existing writable PATH location and never uses sudo or modifies shell rc files.
 
 Starting in v0.4.0, each launch checks the official GitHub stable release. A newer
