@@ -1,20 +1,16 @@
-Bailout is the harness meant to be deleted.
+# bailout v0.4.0
 
-Use it when you have a fresh Mac or Linux VM with no agent or API key configured—or when your main coding setup breaks and you need an independent harness to fix it. Get your normal tools running, then remove bailout.
+The harness meant to be deleted. Bootstrap a fresh Mac or Linux VM, or repair your broken coding setup, then hand back to your usual tools.
 
-- Setup and recovery instructions: inspect the machine, preserve working configuration, back up before repair, verify, and hand back to your usual tools.
-- Interactive Bash handoff for sign-in, sudo, and key entry. Its terminal input and output are not sent to the model.
-- `/shell` opens local Bash; `exit` returns to bailout.
-- `bailout uninstall` removes only the binary, leaving your tools and configuration in place.
-- Streamed replies, prompt editing, history, multiline input, model picker, and working Ctrl-C.
-- Free-only routing with fresh pricing and provider-health checks on every inference.
-- Apple Silicon macOS: 604,704 bytes; Linux x64: 807,712 bytes; Linux ARM64: 725,248 bytes. All sizes are the full uncompressed binary.
-
-[Website](https://bailout.dev) · [Setup & recovery guide](https://bailout.dev/docs/) · [FastAPI reference](https://api.bailout.dev/docs)
+- Checks for a newer stable release at startup, verifies the checksum, replaces itself atomically and restarts. Failed checks retain the current installation. `BAILOUT_NO_UPDATE=1` opts out; `bailout update` checks manually.
+- Public API fair-use limits and a shared persistent hosting allowance. A documented `budget_exhausted` error pauses new work; the CLI displays it without automatic retries.
+- FastAPI stays on Cloudflare behind a private service binding and a global admission guard. Only verified free OpenRouter models are eligible.
 
 ```sh
 curl -fsSL https://bailout.dev/install.sh | bash
 bailout
 ```
 
-No local API key, account, Git, Node, or Python required. Bring Bash, curl, and base system utilities. Commands run automatically with your permissions. Hosted free capacity is shared and best effort.
+Older versions need this installer once to gain automatic updates. macOS ARM64, Linux x64 and Linux ARM64 only. No local API key, account, Git, Node or Python required. Bash is the only model tool and runs automatically with your permissions.
+
+[Website](https://bailout.dev) · [Guide](https://bailout.dev/docs/) · [Limits and error contract](https://github.com/storozhenko98/bailout/blob/main/docs/service-limits.md)

@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from router import Failure, MAX_BODY, Router, validate
 from transport import Transport
 
-app = FastAPI(title="bailout API", version="0.3.0", description="Free-only inference for bailout, the temporary machine setup and recovery harness.")
+app = FastAPI(title="bailout API", version="0.4.0", responses={429: {"description": "Fair-use or upstream capacity limit. Honor Retry-After; see https://bailout.dev/docs/#service-limits."}, 503: {"description": "Shared hosting allowance exhausted (code: budget_exhausted), service paused, or service unavailable. JSON error, code, retry_after_seconds, resets_at, docs. Do not retry immediately."}}, description="Free-only inference for bailout, the temporary machine setup and recovery harness.")
 app.add_middleware(CORSMiddleware, allow_origins=["https://bailout.dev", "http://localhost:4173"], allow_methods=["GET"], allow_headers=[])
 
 
@@ -21,30 +21,13 @@ def router(request):
     return Router(getattr(app.state, "transport", None) or Transport(), binding(request, "OPENROUTER_API_KEY", ""))
 
 
-async def limited(request, name, key):
-    limiter = binding(request, name)
-    if limiter:
-        from pyodide.ffi import to_js
-        from js import Object
-        result = await limiter.limit(to_js({"key": key}, dict_converter=Object.fromEntries))
-        if not result.success:
-            raise Failure(429, "Free capacity is busy. Try again in a minute.")
-
-
 @app.exception_handler(Failure)
 async def failure_handler(request, exc):
-    return JSONResponse({"error": exc.message}, status_code=exc.status, headers={"Cache-Control": "no-store"})
+    return JSONResponse({"error": exc.message, "code": "upstream_rate_limited" if exc.status == 429 else "request_failed"}, status_code=exc.status, headers={"Cache-Control": "no-store"})
 
 
 @app.middleware("http")
 async def limits(request, call_next):
-    if request.url.path.startswith("/v1/"):
-        try:
-            await limited(request, "IP_LIMIT", request.headers.get("CF-Connecting-IP", "local"))
-            if request.url.path == "/v1/chat":
-                await limited(request, "SHARED_LIMIT", "inference")
-        except Failure as exc:
-            return await failure_handler(request, exc)
     response = await call_next(request)
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -53,7 +36,7 @@ async def limits(request, call_next):
 
 @app.get("/health", tags=["service"])
 async def health(request: Request):
-    return {"ok": True, "service": "bailout", "version": "0.3.0", "framework": "FastAPI", "free_only": True, "configured": bool(binding(request, "OPENROUTER_API_KEY"))}
+    return {"ok": True, "service": "bailout", "version": "0.4.0", "framework": "FastAPI", "free_only": True, "configured": bool(binding(request, "OPENROUTER_API_KEY"))}
 
 
 @app.get("/", tags=["service"])

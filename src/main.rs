@@ -1,5 +1,6 @@
 mod local;
 mod ui;
+mod update;
 
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -258,7 +259,8 @@ fn stream_chat(base: &str, body: Value) -> Result<Value> {
     match stream_chat_attempt(base, body.clone(), true) {
         Err(e)
             if !CANCELLED.load(Ordering::SeqCst)
-                && e == "Model connection closed early. No commands were run." =>
+                && (e == "Model connection closed early. No commands were run."
+                    || e.starts_with("Transport failed: curl: (18)")) =>
         {
             // No validated tool call was dispatched. Recover this one response
             // through the non-streaming endpoint, with fresh pricing checks.
@@ -683,7 +685,8 @@ Bash commands run automatically. No local API key or agent setup needed.\n\n\
   Ctrl-A / E      move to the start / end of the line\n\n\
 Options: --model ID, --max-steps N (default 50), --help, --version\n\
 Done with it? Run bailout uninstall to remove only this binary.\n\
-Environment: BAILOUT_API_URL, BAILOUT_MODEL, NO_COLOR\n\
+Updates are checked automatically at startup. Run bailout update to check now.\n\
+Environment: BAILOUT_API_URL, BAILOUT_MODEL, BAILOUT_NO_UPDATE=1, NO_COLOR\n\
 Bash calls start in the session directory; shell variables and cd do not persist."
     );
 }
@@ -730,9 +733,11 @@ fn run() -> Result<()> {
                 break;
             }
             "models" if args.len() == 1 => {
+                update::startup()?;
                 show_models(&base)?;
                 return Ok(());
             }
+            "update" if args.len() == 1 => return update::update(true),
             "uninstall" if args.len() == 1 => return local::uninstall(),
             option if option.starts_with('-') => return Err(format!("Unknown option: {option}")),
             _ => break,
@@ -740,6 +745,7 @@ fn run() -> Result<()> {
         i += 1;
     }
     model = select_model(&model, &[])?;
+    update::startup()?;
     let mut messages = vec![system()];
     if i < args.len() {
         return turn(

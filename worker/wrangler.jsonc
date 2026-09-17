@@ -21,7 +21,7 @@
   "services": [
     {
       "binding": "API",
-      "service": "api"
+      "service": "bailout-gateway"
     }
   ],
   "routes": [
@@ -29,5 +29,8 @@
       "pattern": "bailout.dev",
       "custom_domain": true
     }
-  ]
+  ],
+  "limits": {
+    "cpu_ms": 50
+  }
 }

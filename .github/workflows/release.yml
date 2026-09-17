@@ -29,6 +29,7 @@ jobs:
       - run: cargo test --locked --target ${{ matrix.target }} && cargo build --release --locked --target ${{ matrix.target }}
       - run: python3 scripts/check-size.py target/${{ matrix.target }}/release/bailout
       - run: python3 scripts/smoke.py target/${{ matrix.target }}/release/bailout
+      - run: python3 scripts/test-updater.py target/${{ matrix.target }}/release/bailout
       - run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/bailout dist/bailout

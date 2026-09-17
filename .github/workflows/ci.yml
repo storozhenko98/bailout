@@ -24,6 +24,7 @@ jobs:
         working-directory: worker
       - run: cargo build --release --locked && python3 scripts/check-size.py target/release/bailout
       - run: python3 scripts/smoke.py target/release/bailout
+      - run: python3 scripts/test-updater.py target/release/bailout
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.12.3"

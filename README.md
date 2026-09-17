@@ -142,8 +142,10 @@ The list includes the score and reasons so the preference is inspectable and rep
 
 Free capacity is **shared and best effort**. OpenRouter's account quota and provider
 availability still apply. HTTP 429 means wait or choose another available free model;
-the app never pays to bypass it. Cloudflare rate limits reduce burst abuse but are
-per-location, approximate limits, not a global quota or identity system.
+the app never pays to bypass it. The public gateway enforces 30 requests/minute, 300/hour and 1,000/day per IP,
+plus a globally shared allowance. IPv6 /64s and users behind a NAT share limits.
+At the hosting cutoff, HTTP 503 `budget_exhausted` explains when capacity returns;
+the CLI displays it without automatically retrying. See [limits and error codes](docs/service-limits.md).
 
 Source contracts: [OpenRouter provider routing](https://openrouter.ai/docs/guides/routing/provider-selection),
 [OpenRouter limits](https://openrouter.ai/docs/api/reference/limits),
@@ -154,7 +156,7 @@ Source contracts: [OpenRouter provider routing](https://openrouter.ai/docs/guide
 Prompts, model-selected file contents, and captured Bash output are sent through the hosted
 Worker to OpenRouter and its selected inference provider. Provider data policies apply;
 free does not mean zero data retention. The Worker does not store conversations or
-log request bodies. Worker observability is disabled. Do not include credentials in
+log request bodies. The gateway retains short-lived daily IP hashes and aggregate quota counters; see [retention details](docs/service-limits.md). Worker observability is disabled. Do not include credentials in
 prompts or ask the agent to read secret files.
 
 ## Measured release sizes
@@ -188,7 +190,8 @@ diagnoses a broken fixture agent, backs up its configuration, and verifies repai
 Three direct Rust dependencies: `serde_json`, `libc`, and `rustyline`. System curl
 handles TLS; Bash handles everything the model does. The API is FastAPI on
 Cloudflare Python Workers. A separate Worker serves the static landing page and
-forwards legacy API URLs to FastAPI.
+forwards legacy API URLs through the budget gateway. The Python service is private;
+a SQLite Durable Object reserves capacity atomically before forwarding requests.
 
 The smoke test drives a real controlling terminal. It verifies Ctrl-C as a keypress
 while editing, waiting on a model, running a child process, and at the empty prompt,
@@ -199,8 +202,15 @@ CI runs the tests and real binary smoke checks on all three supported platforms.
 Tagging `vX.Y.Z` builds native release assets, tests them, enforces the size ceiling,
 and publishes SHA-256 checksums. The installer pins one resolved release version,
 verifies the archive checksum, checks its contents and binary size, then installs
-atomically. Set `BAILOUT_VERSION=v0.3.0` or `BAILOUT_INSTALL_DIR=/your/bin` to override.
+atomically. Set `BAILOUT_VERSION=v0.4.0` or `BAILOUT_INSTALL_DIR=/your/bin` to override.
 It prefers an existing writable PATH location and never uses sudo or modifies shell rc files.
+
+Starting in v0.4.0, each launch checks the official GitHub stable release. A newer
+release is downloaded, SHA-256 verified, installed atomically, and restarted with
+the same arguments, working directory, input and backend setting. Failed checks
+keep the existing binary. Use `bailout update` to check manually or
+`BAILOUT_NO_UPDATE=1` to disable automatic updates. Custom-backend builds manage
+their own updates. Older releases need the installer once to gain this feature.
 
 ## Website and API
 
@@ -216,8 +226,10 @@ is inspired by [neobrutalism.dev](https://www.neobrutalism.dev/).
 ## Host your own router
 
 Use Python 3.13+, uv 0.12.3+, and Node (for Wrangler). Choose your own Worker name
-in `api/wrangler.jsonc` before deploying. Replace its custom-domain route with
-your own domain, or remove `routes` to use the generated workers.dev address.
+in `api/wrangler.jsonc` before deploying. Keep Python private. In
+`worker/gateway.wrangler.jsonc`, choose your gateway name and domain and point its
+`API` binding at your Python Worker. Keep workers.dev and preview URLs disabled.
+Review [the budget policy and operating instructions](docs/service-limits.md).
 
 The Python API needs **Workers Paid** on Cloudflare. Its JSON processing and
 streaming exceed the Free plan's 10 ms CPU allowance; requests can otherwise be
@@ -244,11 +256,13 @@ Chat accepts `{model, messages, stream}`. With `stream: true`, it returns NDJSON
 `model`, `text`, and `done` events, or an `error` event. Only the `done` event
 contains a validated message that is safe to pass to the tool dispatcher.
 
-To deploy the site, set the service binding in `worker/wrangler.jsonc` to your API
-Worker, then run `npm ci && npm run deploy` in `worker`.
+Deploy the guard with `npm ci && npx wrangler deploy --config gateway.wrangler.jsonc`
+in `worker`. To deploy the site, point the service binding in `worker/wrangler.jsonc`
+at your gateway Worker, then run `npm run deploy`. Set your own domains in both
+configs. The public gateway additionally exposes `/v1/status`.
 
 ```sh
-export BAILOUT_API_URL=https://your-worker.your-subdomain.workers.dev
+export BAILOUT_API_URL=https://api.your-domain.example
 bailout
 ```
 

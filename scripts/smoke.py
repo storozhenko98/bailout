@@ -42,6 +42,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         assert self.path == '/v1/chat'
         assert body['model'] == 'auto'
         prompt = next(m['content'] for m in reversed(body['messages']) if m['role'] == 'user')
+        if prompt in ('budget exhausted', 'client limited'):
+            self.send_response(503 if prompt == 'budget exhausted' else 429)
+            self.send_header('Content-Type', 'application/json'); self.send_header('Retry-After','3600'); self.end_headers()
+            self.wfile.write(json.dumps(dict(error='Shared hosting allowance exhausted. Capacity returns later. https://bailout.dev/docs/#service-limits',code='budget_exhausted' if prompt == 'budget exhausted' else 'client_rate_limited',retry_after_seconds=3600)).encode())
+            return
         if prompt == 'gateway retry' and gateway_failures == 0:
             gateway_failures += 1
             self.send_response(503); self.end_headers()
@@ -69,11 +74,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         events = [dict(type='model', model=response['model'])]
         if message.get('content'):
             events.extend(dict(type='text', text=chunk) for chunk in [message['content'][:4], message['content'][4:]])
-        if prompt not in ('broken stream', 'recover stream'): events.append(dict(type='done', **response))
+        if prompt not in ('broken stream', 'recover stream', 'truncated http'): events.append(dict(type='done', **response))
         raw = ''.join(json.dumps(e)+'\n' for e in events).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'application/x-ndjson')
-        self.send_header('Content-Length', str(len(raw)))
+        self.send_header('Content-Length', str(len(raw) + (50 if prompt == 'truncated http' else 0)))
         self.end_headers()
         try: self.wfile.write(raw)
         except (BrokenPipeError, ConnectionResetError): pass
@@ -133,7 +138,7 @@ class Terminal:
 
 server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
-env = {**os.environ, 'BAILOUT_API_URL': f'http://127.0.0.1:{server.server_port}', 'BAILOUT_MODEL':'auto', 'TERM':'xterm-256color', 'NO_COLOR':'1'}
+env = {**os.environ, 'BAILOUT_API_URL': f'http://127.0.0.1:{server.server_port}', 'BAILOUT_MODEL':'auto', 'TERM':'xterm-256color', 'NO_COLOR':'1', 'BAILOUT_NO_UPDATE':'1'}
 with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
     def run(prompt):
         return subprocess.run([binary, prompt], cwd=folder, env=env, capture_output=True, text=True, timeout=15)
@@ -143,9 +148,18 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
     gateway = run('gateway retry')
     assert gateway.returncode == 0 and 'Reply: gateway retry' in gateway.stdout
     assert gateway_failures == 1
+    for prompt in ['budget exhausted', 'client limited']:
+        before = len(calls)
+        refused = run(prompt)
+        assert refused.returncode == 1 and 'Shared hosting allowance exhausted' in refused.stderr
+        assert 'https://bailout.dev/docs/#service-limits' in refused.stderr
+        assert len(calls) == before + 1, 'Policy refusal was retried'
     recovered = run('recover stream')
     assert recovered.returncode == 0 and 'Reply: recover stream' in recovered.stdout
     assert 'Recovering a complete response' in recovered.stderr
+    truncated = run('truncated http')
+    assert truncated.returncode == 0 and 'Reply: truncated http' in truncated.stdout
+    assert 'Recovering a complete response' in truncated.stderr
     broken = run('broken stream')
     assert broken.returncode == 1 and not pathlib.Path(folder, 'hello.txt').exists()
     result = run('create hello.txt')
@@ -163,7 +177,7 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
     startup = minimal_home/'broken-startup'
     startup.write_text('exit 99\n')
     minimal_env = {'PATH': str(minimal_bin), 'HOME': str(minimal_home),
-                   'BASH_ENV': str(startup), 'BAILOUT_API_URL': env['BAILOUT_API_URL']}
+                   'BASH_ENV': str(startup), 'BAILOUT_API_URL': env['BAILOUT_API_URL'], 'BAILOUT_NO_UPDATE':'1'}
     fresh = subprocess.run([binary, 'create hello.txt'], cwd=folder, env=minimal_env,
                            capture_output=True, text=True, timeout=15)
     assert fresh.returncode == 0, fresh.stderr
