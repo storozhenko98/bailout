@@ -4,7 +4,7 @@ import worker from '../src/index.js';
 
 test('old API URLs preserve requests through the FastAPI service binding', async () => {
   const env = { API: { async fetch(request) {
-    assert.equal(request.url, 'https://api.bailout-router.workers.dev/v1/chat');
+    assert.equal(request.url, 'https://api.bailout.dev/v1/chat');
     assert.equal(request.method, 'POST');
     assert.equal(request.headers.get('CF-Connecting-IP'), '192.0.2.1');
     assert.deepEqual(await request.json(), { messages: [] });

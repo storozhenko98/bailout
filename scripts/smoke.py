@@ -236,12 +236,15 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
         terminal.send(b'\x03')
         terminal.exit()
     finally: terminal.cleanup()
-    basic = Terminal(folder, term='dumb')
-    try:
-        basic.prompt()
-        basic.send(b'\x03')
-        basic.exit()
-    finally: basic.cleanup()
+    # Interrupt as soon as the plain prompt is visible, including the gap before
+    # its first read. Repetition catches the lost-signal race on fast Linux hosts.
+    for _ in range(20):
+        basic = Terminal(folder, term='dumb')
+        try:
+            basic.prompt()
+            basic.send(b'\x03')
+            basic.exit()
+        finally: basic.cleanup()
     disposable = pathlib.Path(folder, 'bailout-to-remove')
     retained = pathlib.Path(folder, 'keep-my-config')
     retained.write_text('keep this')

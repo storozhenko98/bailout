@@ -9,7 +9,7 @@ Bailout gets you a small, independent harness in one command. Use it to bootstra
 the machine or repair your setup, get back to your normal tools, then delete it.
 
 ```sh
-curl -fsSL https://bailout.bailout-router.workers.dev/install.sh | bash
+curl -fsSL https://bailout.dev/install.sh | bash
 bailout
 ```
 
@@ -17,7 +17,7 @@ No account, local API key, Git, Node, Python, or existing agent required.
 Apple Silicon macOS, x64 Linux, and ARM64 Linux. Bring Bash, curl, internet access,
 and the usual base utilities (including tar and a SHA-256 utility).
 
-[Website](https://bailout.bailout-router.workers.dev) · [Setup & recovery guide](https://bailout.bailout-router.workers.dev/docs/) · [Releases](https://github.com/storozhenko98/bailout/releases/latest)
+[Website](https://bailout.dev) · [Setup & recovery guide](https://bailout.dev/docs/) · [Releases](https://github.com/storozhenko98/bailout/releases/latest)
 
 ## When you need it
 
@@ -194,10 +194,10 @@ It prefers an existing writable PATH location and never uses sudo or modifies sh
 
 ## Website and API
 
-- [Landing page](https://bailout.bailout-router.workers.dev)
-- [User guide](https://bailout.bailout-router.workers.dev/docs/)
-- [FastAPI reference](https://api.bailout-router.workers.dev/docs)
-- [Live model list](https://api.bailout-router.workers.dev/v1/models)
+- [Landing page](https://bailout.dev)
+- [User guide](https://bailout.dev/docs/)
+- [FastAPI reference](https://api.bailout.dev/docs)
+- [Live model list](https://api.bailout.dev/v1/models)
 
 The site uses self-hosted Space Grotesk and IBM Plex Mono, with their OFL licenses
 included. No analytics, external fonts, or frontend framework. The visual language

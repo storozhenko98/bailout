@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_API: &str = match option_env!("BAILOUT_DEFAULT_API") {
     Some(url) => url,
-    None => "https://api.bailout-router.workers.dev",
+    None => "https://api.bailout.dev",
 };
 const OUTPUT_LIMIT: usize = 16_000;
 const CONTEXT_LIMIT: usize = 100_000;

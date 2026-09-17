@@ -99,13 +99,39 @@ pub enum Input {
     Cleared,
     Exit,
 }
+
+// Keep a signal arriving just before read() from trapping a plain terminal in a
+// blocking read. Restore the descriptor before handing it to Bash or an editor.
+struct NonblockingInput(i32);
+impl NonblockingInput {
+    fn new() -> super::Result<Self> {
+        let flags = unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_GETFL) };
+        if flags < 0
+            || unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_SETFL, flags | libc::O_NONBLOCK) }
+                < 0
+        {
+            return Err(io::Error::last_os_error().to_string());
+        }
+        Ok(Self(flags))
+    }
+}
+impl Drop for NonblockingInput {
+    fn drop(&mut self) {
+        unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_SETFL, self.0) };
+    }
+}
+
 pub fn read(editor: &mut DefaultEditor, selecting: bool) -> super::Result<Input> {
     let plain = if selecting { "  model › " } else { "  › " };
     if env::var("TERM").unwrap_or_default() == "dumb" {
+        let _input = NonblockingInput::new()?;
         eprint!("{plain}");
         let _ = io::stderr().flush();
         let mut bytes = Vec::new();
         loop {
+            if super::CANCELLED.load(Ordering::SeqCst) {
+                return Ok(Input::Exit);
+            }
             let mut c = 0u8;
             let count = unsafe { libc::read(libc::STDIN_FILENO, (&mut c as *mut u8).cast(), 1) };
             if count == 0 {
@@ -115,6 +141,15 @@ pub fn read(editor: &mut DefaultEditor, selecting: bool) -> super::Result<Input>
                 let error = io::Error::last_os_error();
                 if error.kind() == io::ErrorKind::Interrupted {
                     return Ok(Input::Exit);
+                }
+                if error.kind() == io::ErrorKind::WouldBlock {
+                    let mut poll = libc::pollfd {
+                        fd: libc::STDIN_FILENO,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    unsafe { libc::poll(&mut poll, 1, 50) };
+                    continue;
                 }
                 return Err(error.to_string());
             }

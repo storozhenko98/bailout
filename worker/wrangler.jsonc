@@ -4,13 +4,30 @@
   "main": "src/index.js",
   "compatibility_date": "2026-09-17",
   "workers_dev": true,
-  "observability": { "enabled": false },
+  "observability": {
+    "enabled": false
+  },
   "assets": {
     "directory": "../site",
     "binding": "ASSETS",
-    "run_worker_first": ["/v1/*", "/health", "/install.sh"],
+    "run_worker_first": [
+      "/v1/*",
+      "/health",
+      "/install.sh"
+    ],
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
   },
-  "services": [{ "binding": "API", "service": "api" }]
+  "services": [
+    {
+      "binding": "API",
+      "service": "api"
+    }
+  ],
+  "routes": [
+    {
+      "pattern": "bailout.dev",
+      "custom_domain": true
+    }
+  ]
 }

@@ -9,7 +9,7 @@ from router import Failure, MAX_BODY, Router, validate
 from transport import Transport
 
 app = FastAPI(title="bailout API", version="0.3.0", description="Free-only inference for bailout, the temporary machine setup and recovery harness.")
-app.add_middleware(CORSMiddleware, allow_origins=["https://bailout.bailout-router.workers.dev", "http://localhost:4173"], allow_methods=["GET"], allow_headers=[])
+app.add_middleware(CORSMiddleware, allow_origins=["https://bailout.dev", "http://localhost:4173"], allow_methods=["GET"], allow_headers=[])
 
 
 def binding(request, name, default=None):
@@ -58,7 +58,7 @@ async def health(request: Request):
 
 @app.get("/", tags=["service"])
 async def root():
-    return {"name": "bailout API", "docs": "/docs", "site": "https://bailout.bailout-router.workers.dev"}
+    return {"name": "bailout API", "docs": "/docs", "site": "https://bailout.dev"}
 
 
 @app.get("/v1/models", tags=["models"])

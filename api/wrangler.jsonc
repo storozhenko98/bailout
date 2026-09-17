@@ -2,11 +2,35 @@
   "name": "api",
   "main": "src/worker.py",
   "compatibility_date": "2026-09-17",
-  "compatibility_flags": ["python_workers"],
+  "compatibility_flags": [
+    "python_workers"
+  ],
   "workers_dev": true,
-  "observability": { "enabled": false },
+  "observability": {
+    "enabled": false
+  },
   "ratelimits": [
-    { "name": "IP_LIMIT", "namespace_id": "1003", "simple": { "limit": 30, "period": 60 } },
-    { "name": "SHARED_LIMIT", "namespace_id": "1004", "simple": { "limit": 18, "period": 60 } }
+    {
+      "name": "IP_LIMIT",
+      "namespace_id": "1003",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    },
+    {
+      "name": "SHARED_LIMIT",
+      "namespace_id": "1004",
+      "simple": {
+        "limit": 18,
+        "period": 60
+      }
+    }
+  ],
+  "routes": [
+    {
+      "pattern": "api.bailout.dev",
+      "custom_domain": true
+    }
   ]
 }

@@ -10,10 +10,10 @@ Use it when you have a fresh Mac or Linux VM with no agent or API key configured
 - Free-only routing with fresh pricing and provider-health checks on every inference.
 - Apple Silicon macOS, Linux x64, and Linux ARM64; native binaries under 6 MB.
 
-[Website](https://bailout.bailout-router.workers.dev) · [Setup & recovery guide](https://bailout.bailout-router.workers.dev/docs/) · [FastAPI reference](https://api.bailout-router.workers.dev/docs)
+[Website](https://bailout.dev) · [Setup & recovery guide](https://bailout.dev/docs/) · [FastAPI reference](https://api.bailout.dev/docs)
 
 ```sh
-curl -fsSL https://bailout.bailout-router.workers.dev/install.sh | bash
+curl -fsSL https://bailout.dev/install.sh | bash
 bailout
 ```
 

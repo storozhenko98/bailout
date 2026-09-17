@@ -3,7 +3,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/v1/') || url.pathname === '/health') {
-      url.hostname = 'api.bailout-router.workers.dev';
+      url.hostname = 'api.bailout.dev';
       return env.API.fetch(new Request(url, request));
     }
     if (url.pathname === '/install.sh') {

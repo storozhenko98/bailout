@@ -286,7 +286,7 @@ class Router:
             try:
                 response = await self.transport.request(ORIGIN + "/chat/completions", method="POST", timeout=90,
                     headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json",
-                             "HTTP-Referer": "https://bailout.bailout-router.workers.dev", "X-OpenRouter-Title": "bailout"},
+                             "HTTP-Referer": "https://bailout.dev", "X-OpenRouter-Title": "bailout"},
                     body=json.dumps(self.body(model, live, data["messages"], data["stream"])))
             except Exception:
                 raise Failure(504, "The model timed out. Try again or choose another with /model.") from None
