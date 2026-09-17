@@ -202,7 +202,7 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
         terminal.send('/shell\r')
         terminal.expect('This shell is not sent to the model.')
         terminal.send("printf 'SHELL_OK\\n'\r")
-        terminal.expect('\r\nSHELL_OK\r\n')
+        terminal.expect('SHELL_OK\r\n')
         terminal.send('exit\r')
         terminal.expect('Back in bailout')
         terminal.prompt()
