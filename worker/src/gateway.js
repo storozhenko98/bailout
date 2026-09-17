@@ -3,12 +3,18 @@ import { PublicStats, publicStatsResponse } from './stats.js';
 
 export class BudgetGuard {
   constructor(ctx, env) {
+    this.ctx = ctx;
     this.ledger = new BudgetLedger(ctx.storage, Number(env.BUDGET_ALLOWANCE_MICRO_USD));
-    this.stats = new PublicStats(ctx.storage);
+    this.stats = new PublicStats(ctx.storage, Date.now(), fetch, env.GITHUB_STATS_TOKEN);
   }
   async fetch(request) {
     const path = new URL(request.url).pathname;
-    if (path === '/stats' && request.method === 'GET') return Response.json(await this.stats.snapshot());
+    if (path === '/stats' && request.method === 'GET') {
+      // Serve the snapshot immediately; a slow GitHub request must not make
+      // either counter disappear or block the shared admission object.
+      this.ctx.waitUntil(this.stats.refresh());
+      return Response.json(this.stats.snapshot());
+    }
     if (path === '/record-request' && request.method === 'POST') {
       this.stats.recordRequest();
       return new Response(null, { status: 204 });
@@ -18,6 +24,7 @@ export class BudgetGuard {
     const result = this.ledger.admit(client, kind);
     return response(result);
   }
+  async alarm() { await this.stats.refresh(); }
 }
 
 function response({ status, body }) {

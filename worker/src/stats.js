@@ -1,65 +1,120 @@
 // Aggregate counters only. No request bodies, IPs, installation IDs or event log.
-export const DOWNLOAD_REFRESH_MS = 15 * 60_000;
+export const DOWNLOAD_REFRESH_MS = 2 * 60_000;
+export const DOWNLOAD_RETRY_MS = 30_000;
 const ASSET = /^bailout-(?:macos-arm64|linux-x64|linux-arm64)\.tar\.gz$/;
 const RELEASES = 'https://api.github.com/repos/storozhenko98/bailout/releases';
 
-export async function releaseDownloads(fetcher = fetch) {
+class DownloadError extends Error {
+  constructor(code, retryAt = 0) { super(code); this.code = code; this.retryAt = retryAt; }
+}
+
+function rateLimitReset(headers, now) {
+  const retry = headers.get('Retry-After');
+  const retryAt = retry && /^\d+$/.test(retry) ? now + Number(retry) * 1000 : Date.parse(retry);
+  const reset = headers.get('X-RateLimit-Remaining') === '0' ? Number(headers.get('X-RateLimit-Reset')) * 1000 : 0;
+  return Math.max(now + 60_000, Number.isFinite(retryAt) ? retryAt : 0, Number.isFinite(reset) ? reset + 1000 : 0);
+}
+
+export async function releaseDownloads(fetcher = fetch, now = Date.now()) {
   const counts = {};
+  // One deadline bounds the whole refresh, including bodies and pagination.
+  const signal = AbortSignal.timeout(8000);
   for (let page = 1; page <= 10; page++) {
-    const result = await fetcher(`${RELEASES}?per_page=100&page=${page}`, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'bailout-public-stats', 'X-GitHub-Api-Version': '2022-11-28' },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!result.ok) throw new Error('Download counts unavailable');
-    const releases = await result.json();
-    if (!Array.isArray(releases)) throw new Error('Invalid release list');
+    let result;
+    try {
+      result = await fetcher(`${RELEASES}?per_page=100&page=${page}`, {
+        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'bailout-public-stats', 'X-GitHub-Api-Version': '2022-11-28' },
+        cache: 'no-store', redirect: 'error', signal,
+      });
+    } catch {
+      throw new DownloadError(signal.aborted ? 'github_timeout' : 'github_network_error');
+    }
+    if (!result.ok) {
+      const retryAt = [403, 429].includes(result.status) ? rateLimitReset(result.headers, now) : 0;
+      await result.body?.cancel();
+      throw new DownloadError(`github_http_${result.status}`, retryAt);
+    }
+    let releases;
+    try { releases = await result.json(); }
+    catch { throw new DownloadError(signal.aborted ? 'github_timeout' : 'github_invalid_response'); }
+    if (!Array.isArray(releases)) throw new DownloadError('github_invalid_response');
     for (const release of releases) {
+      if (!release || typeof release !== 'object') throw new DownloadError('github_invalid_response');
       if (release.draft || release.prerelease) continue;
-      if (!Array.isArray(release.assets)) throw new Error('Missing release assets');
+      if (!Array.isArray(release.assets)) throw new DownloadError('github_invalid_response');
       for (const asset of release.assets) {
+        if (!asset || typeof asset !== 'object') throw new DownloadError('github_invalid_response');
         if (!ASSET.test(asset.name)) continue;
-        if (!Number.isSafeInteger(asset.id) || asset.id < 1 || !Number.isSafeInteger(asset.download_count) || asset.download_count < 0) throw new Error('Invalid download count');
+        if (!Number.isSafeInteger(asset.id) || asset.id < 1 || !Number.isSafeInteger(asset.download_count) || asset.download_count < 0) throw new DownloadError('github_invalid_count');
         counts[asset.id] = asset.download_count;
       }
     }
     if (releases.length < 100) return counts;
   }
-  throw new Error('Release pagination limit reached'); // Never publish a partial total.
+  throw new DownloadError('github_pagination_limit'); // Never publish a partial total.
 }
 
 export class PublicStats {
-  constructor(storage, now = Date.now(), fetcher = fetch) {
+  constructor(storage, now = Date.now(), fetcher = fetch, githubToken = '') {
     this.storage = storage;
     this.sql = storage.sql;
-    this.fetcher = fetcher;
+    // Only the fixed GitHub release endpoint sees this dedicated read-only key.
+    // It is never persisted in statistics or returned to browsers/clients.
+    this.fetcher = githubToken ? (url, options) => fetcher(url, {
+      ...options, headers: { ...options.headers, Authorization: `Bearer ${githubToken}` },
+    }) : fetcher;
+    this.authenticated = githubToken ? 1 : 0;
     this.refreshing = null;
     this.sql.exec('CREATE TABLE IF NOT EXISTS public_stats (id INTEGER PRIMARY KEY, requests INTEGER NOT NULL, since TEXT NOT NULL, downloads TEXT NOT NULL, downloads_updated TEXT, next_refresh INTEGER NOT NULL)');
     this.sql.exec('INSERT OR IGNORE INTO public_stats VALUES (1, 0, ?, ?, NULL, 0)', new Date(now).toISOString(), '{}');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS download_refresh (id INTEGER PRIMARY KEY, last_attempt TEXT, last_error TEXT, failures INTEGER NOT NULL)');
+    this.sql.exec('INSERT OR IGNORE INTO download_refresh VALUES (1, NULL, NULL, 0)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS download_source (id INTEGER PRIMARY KEY, authenticated INTEGER NOT NULL)');
+    this.sql.exec('INSERT OR IGNORE INTO download_source VALUES (1, 0)');
   }
   recordRequest() {
     this.sql.exec('UPDATE public_stats SET requests = requests + 1 WHERE id = 1');
   }
-  async snapshot(now = Date.now()) {
+  async refresh(now = Date.now()) {
+    if (this.refreshing) return this.refreshing;
     const row = this.sql.exec('SELECT * FROM public_stats WHERE id = 1').one();
-    if (this.refreshing) await this.refreshing;
-    else if (row.next_refresh <= now) {
-      // Persist the retry deadline before I/O, including failures/restarts. One
-      // shared object refreshes GitHub; page views cannot create a refresh storm.
-      this.sql.exec('UPDATE public_stats SET next_refresh = ? WHERE id = 1', now + DOWNLOAD_REFRESH_MS);
-      this.refreshing = this.refreshDownloads(now).finally(() => { this.refreshing = null; });
-      await this.refreshing;
+    // Upgrade the old 15-minute schedule once, without bypassing a provider's
+    // Retry-After after this deployment has made its first attempt.
+    const state = this.sql.exec('SELECT * FROM download_refresh WHERE id = 1').one();
+    const source = this.sql.exec('SELECT authenticated FROM download_source WHERE id = 1').one();
+    if (row.next_refresh > now && state.last_attempt && source.authenticated === this.authenticated) {
+      await this.schedule(row.next_refresh);
+      return;
     }
+    this.sql.exec('UPDATE public_stats SET next_refresh = ? WHERE id = 1', now + DOWNLOAD_REFRESH_MS);
+    // Provisioning authentication changes from an IP quota to the account quota;
+    // its first check need not wait for the old anonymous IP's reset deadline.
+    this.sql.exec('UPDATE download_source SET authenticated = ? WHERE id = 1', this.authenticated);
+    this.sql.exec('UPDATE download_refresh SET last_attempt = ? WHERE id = 1', new Date(now).toISOString());
+    this.refreshing = this.refreshDownloads(now).finally(() => { this.refreshing = null; });
+    return this.refreshing;
+  }
+  async schedule(when) {
+    if (await this.storage.getAlarm() !== when) await this.storage.setAlarm(when);
+  }
+  snapshot(now = Date.now()) {
     const current = this.sql.exec('SELECT * FROM public_stats WHERE id = 1').one();
+    const state = this.sql.exec('SELECT * FROM download_refresh WHERE id = 1').one();
     return {
       downloads: { total: current.downloads_updated ? Object.values(JSON.parse(current.downloads)).reduce((a, b) => a + b, 0) : null,
-        updated_at: current.downloads_updated, source: 'github_release_assets' },
+        updated_at: current.downloads_updated, source: 'github_release_assets',
+        last_attempt_at: state.last_attempt, next_refresh_at: new Date(current.next_refresh).toISOString(),
+        last_error: state.last_error, consecutive_failures: state.failures },
       requests: { total: current.requests, since: current.since, updated_at: new Date(now).toISOString() },
       docs: 'https://bailout.dev/docs/#public-stats',
     };
   }
   async refreshDownloads(now) {
+    // Arm the next run before network I/O so a terminated request cannot strand
+    // the counter. Alarms continue even when nobody has the website open.
+    await this.schedule(now + DOWNLOAD_REFRESH_MS);
     try {
-      const observed = await releaseDownloads(this.fetcher);
+      const observed = await releaseDownloads(this.fetcher, now);
       this.storage.transactionSync(() => {
         const previous = JSON.parse(this.sql.exec('SELECT downloads FROM public_stats WHERE id = 1').one().downloads);
         // Retain each asset's highest observed count, even if an old release is
@@ -68,8 +123,17 @@ export class PublicStats {
         const total = Object.values(previous).reduce((a, b) => a + b, 0);
         if (!Number.isSafeInteger(total)) throw new Error('Invalid total');
         this.sql.exec('UPDATE public_stats SET downloads = ?, downloads_updated = ? WHERE id = 1', JSON.stringify(previous), new Date(now).toISOString());
+        this.sql.exec('UPDATE download_refresh SET last_error = NULL, failures = 0 WHERE id = 1');
       });
-    } catch { /* Keep the last known value and timestamp; never invent zero. */ }
+    } catch (error) {
+      const failures = this.sql.exec('SELECT failures FROM download_refresh WHERE id = 1').one().failures + 1;
+      const delay = Math.min(5 * 60_000, DOWNLOAD_RETRY_MS * 2 ** Math.min(failures - 1, 4));
+      const next = Math.max(now + delay, error instanceof DownloadError ? error.retryAt : 0);
+      // Never store upstream bodies, raw exceptions, credentials or client data.
+      this.sql.exec('UPDATE download_refresh SET last_error = ?, failures = ? WHERE id = 1', error instanceof DownloadError ? error.code : 'download_storage_error', failures);
+      this.sql.exec('UPDATE public_stats SET next_refresh = ? WHERE id = 1', next);
+      await this.schedule(next);
+    }
   }
 }
 
@@ -86,7 +150,7 @@ export async function publicStatsResponse(env, cache = caches.default) {
     const result = await stub.fetch('https://budget/stats');
     if (!result.ok) throw new Error('Statistics unavailable');
     const response = new Response(result.body, { headers: { 'Content-Type': 'application/json',
-      'Cache-Control': 'public, max-age=60', 'Access-Control-Allow-Origin': 'https://bailout.dev', 'X-Content-Type-Options': 'nosniff' } });
+      'Cache-Control': 'public, max-age=30', 'Access-Control-Allow-Origin': 'https://bailout.dev', 'X-Content-Type-Options': 'nosniff' } });
     await cache.put(key, response.clone());
     return browserResponse(response);
   } catch {
@@ -97,7 +161,7 @@ export async function publicStatsResponse(env, cache = caches.default) {
 
 function browserResponse(cached) {
   const result = new Response(cached.body, cached);
-  // Keep the edge's explicit 60-second Cache API entry, but prevent the zone's
+  // Keep the edge's explicit 30-second Cache API entry, but prevent the zone's
   // longer Browser Cache TTL from freezing counters in a visitor's tab.
   result.headers.set('Cache-Control', 'no-store');
   return result;

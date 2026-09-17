@@ -10,7 +10,7 @@ export function isFresh(timestamp, maxAge, now = Date.now()) {
 
 export function statView(metric, kind, now = Date.now()) {
   const valid = Number.isSafeInteger(metric?.total) && metric.total >= 0;
-  const live = valid && isFresh(metric.updated_at, kind === 'downloads' ? 20 * 60_000 : 3 * 60_000, now);
+  const live = valid && isFresh(metric.updated_at, kind === 'downloads' ? 5 * 60_000 : 3 * 60_000, now);
   return { text: formatCount(metric?.total), live,
     title: valid ? `${metric.total.toLocaleString('en-US')} ${kind === 'downloads' ? 'binary downloads' : 'model requests'}${kind === 'requests' && metric.since ? ` since ${new Date(metric.since).toLocaleDateString()}` : ''} · ${live ? 'updated' : 'last updated'} ${new Date(metric.updated_at).toLocaleString()}` : 'Count temporarily unavailable' };
 }
@@ -47,7 +47,7 @@ if (root) {
     } catch { render(previous, true); }
     finally {
       running = false;
-      if (!document.hidden) timer = setTimeout(refresh, 60_000);
+      if (!document.hidden) timer = setTimeout(refresh, 30_000);
     }
   }
   document.addEventListener('visibilitychange', () => {
