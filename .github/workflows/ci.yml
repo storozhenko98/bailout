@@ -32,3 +32,4 @@ jobs:
         working-directory: api
       - run: bash -n install.sh
       - run: python3 scripts/test-installer.py
+      - run: python3 scripts/check-social.py
