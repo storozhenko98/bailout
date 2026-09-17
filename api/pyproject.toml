@@ -1,0 +1,12 @@
+[project]
+name = "bailout-api"
+version = "0.2.0"
+requires-python = ">=3.13"
+dependencies = ["fastapi>=0.115", "httpx>=0.28"]
+
+[dependency-groups]
+dev = ["workers-py", "workers-runtime-sdk", "pytest", "pytest-asyncio", "uvicorn"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]

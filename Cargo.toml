@@ -1,6 +1,6 @@
 [package]
 name = "bailout"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "A tiny, fully automatic terminal coding agent. One tool: bash. Free models only."
 license = "MIT"
@@ -10,6 +10,7 @@ rust-version = "1.85"
 [dependencies]
 serde_json = "1.0"
 libc = "0.2"
+rustyline = { version = "18.0.1", default-features = false, features = ["custom-bindings"] }
 
 [profile.release]
 opt-level = "z"

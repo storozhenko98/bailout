@@ -9,16 +9,19 @@ bailout
 
 Apple Silicon macOS, x64 Linux, and arm64 Linux. Requires the system's `bash` and
 `curl`; no Node, Python, local model, or API key. The native Rust executable is
-about **0.4 MB on Apple Silicon**. Release builds must stay below **6,000,000 bytes**
+about **0.6 MB on Apple Silicon**. Release builds must stay below **6,000,000 bytes**
 uncompressed. Linux releases use static musl, so there is no glibc version dependency.
 
 ```text
 $ bailout
 
-bailout · full auto · bash only · free models
-/help for commands · Ctrl-C stops a task
+  bailout v0.2.0
+  ~/my-project
 
-› fix the failing test and run the suite
+  › auto · free models · full access
+  /model choose a model   /help shortcuts
+
+  › fix the failing test and run the suite
 ```
 
 Commands run immediately with your account's permissions. This is not a sandbox.
@@ -41,7 +44,8 @@ bailout --max-steps 100 'finish the migration'
 | `/model 2` | Pick a number from the last model list |
 | `/model vendor/model:free` | Pin an explicit free model |
 | `/model auto` | Pick a healthy free model automatically; the default |
-| `/model` | Show the current selection |
+| `/model` | Open the interactive model picker |
+| `/last` | Expand the last command’s captured output |
 | `/new` | Clear the conversation |
 | `/help` | Show help |
 | `/exit` | Quit |
@@ -54,21 +58,24 @@ Background servers should redirect their output. Default command timeout: 2 minu
 the model can request up to 30 minutes. Each task allows 50 model steps by default.
 Tool output is bounded; old complete conversation turns are dropped when needed.
 Conversations stay in memory and are not saved to disk.
-The first model step of each task must call Bash; a text-only claim that work was
-done is rejected when no tool has run. Subsequent steps can finish with a text answer.
+Normal conversation can return a direct answer. Bash is called when the model needs to
+inspect, change, or verify something. There is no forced tool call. Replies stream as
+they arrive; tool calls execute only after a complete, validated final response.
 
-This intentionally uses ordinary terminal line input and scrollback, not a full-screen
-TUI. There are no plugins, MCP, extra file tools, browser tools, or local inference.
+The terminal editor supports history, Unicode, bracketed paste, Ctrl-J / Alt-Enter
+for multiline input, and Ctrl-A / Ctrl-E. Ctrl-C clears a draft or exits an empty
+prompt. The interface uses ordinary terminal scrollback, so commands and answers
+remain readable after a task finishes. There are no plugins, MCP, extra file tools, browser tools, or local inference.
 
 ## Free means zero
 
-The hosted Cloudflare Worker owns the OpenRouter key. The client never receives it.
+The hosted FastAPI service on Cloudflare Python Workers owns the OpenRouter key. The client never receives it.
 For **every model request**, including subsequent agent steps and fallback attempts:
 
 1. Fetch a fresh OpenRouter catalog with cache bypass; require an explicit `:free`
    model, native tool support, and exactly zero in every reported pricing field.
 2. Fetch that model's current endpoints. Require matching model IDs, zero endpoint
-   prices, tool support, an operational status, and at least 90% reported uptime.
+   prices, tool support, an operational status, and at least 95% reported uptime over 30 minutes (and over 5 minutes when reported).
    Missing prices or unknown health fail closed.
 3. Send only the exact verified provider endpoints with `allow_fallbacks: false`,
    `require_parameters: true`, and a hard zero `max_price` for prompt, completion,
@@ -114,36 +121,64 @@ cargo build --release --locked
 python3 scripts/check-size.py target/release/bailout
 python3 scripts/smoke.py target/release/bailout
 python3 scripts/test-installer.py
-cd worker && npm ci && npm test
+(cd api && uv sync && uv run pytest)
+(cd worker && npm ci && npm test)
 ```
 
 Optional live file-write verification (uses shared free quota):
 `python3 scripts/live-smoke.py target/release/bailout`.
 
-Only two direct Rust dependencies: `serde_json` and `libc`. System curl handles TLS;
-Bash handles everything the model does. The Worker is about 5 KB gzipped with no
-runtime dependencies. A native JavaScript Worker keeps this proxy smaller and simpler
-than adding FastAPI, ASGI, and a Python runtime.
+Three direct Rust dependencies: `serde_json`, `libc`, and `rustyline`. System curl
+handles TLS; Bash handles everything the model does. The API is FastAPI on
+Cloudflare Python Workers. A separate Worker serves the static landing page and
+forwards legacy API URLs to FastAPI.
+
+The smoke test drives a real controlling terminal. It verifies Ctrl-C as a keypress
+while editing, waiting on a model, running a child process, and at the empty prompt,
+plus history, multiline input, model selection, and recovery after interruption.
 
 CI runs the tests and real binary smoke checks on all three supported platforms.
 Tagging `vX.Y.Z` builds native release assets, tests them, enforces the size ceiling,
 and publishes SHA-256 checksums. The installer pins one resolved release version,
 verifies the archive checksum, checks its contents and binary size, then installs
-atomically. Set `BAILOUT_VERSION=v0.1.0` or `BAILOUT_INSTALL_DIR=/your/bin` to override.
+atomically. Set `BAILOUT_VERSION=v0.2.0` or `BAILOUT_INSTALL_DIR=/your/bin` to override.
 It prefers an existing writable PATH location and never uses sudo or modifies shell rc files.
+
+## Website and API
+
+- [Landing page](https://bailout.bailout-router.workers.dev)
+- [User guide](https://bailout.bailout-router.workers.dev/docs/)
+- [FastAPI reference](https://api.bailout-router.workers.dev/docs)
+- [Live model list](https://api.bailout-router.workers.dev/v1/models)
+
+The site uses self-hosted Space Grotesk and IBM Plex Mono, with their OFL licenses
+included. No analytics, external fonts, or frontend framework. The visual language
+is inspired by [neobrutalism.dev](https://www.neobrutalism.dev/).
 
 ## Host your own router
 
+Use Python 3.13+, uv 0.12.3+, and Node (for Wrangler). Choose your own Worker name
+in `api/wrangler.jsonc` before deploying.
+
 ```sh
-cd worker
-npm ci
-npx wrangler login
-npx wrangler secret put OPENROUTER_API_KEY
-npm run deploy
+cd api
+uv sync
+uv run pywrangler login
+uv run pywrangler deploy
+uv run pywrangler secret put OPENROUTER_API_KEY
 ```
 
-Enter the OpenRouter key at the secret prompt. Never put it in source or `wrangler.jsonc`.
-For local development, place it in a gitignored `.dev.vars` file and run `npm run dev`.
+Enter the OpenRouter key at the secret prompt. Never put it in source or config.
+For edge development, place it in a gitignored `.dev.vars` file and run
+`uv run pywrangler dev`. For ordinary local FastAPI development, set the key in
+your environment and run `uv run uvicorn app:app --app-dir src --reload`.
+The API exposes `/health`, `/v1/models`, `/v1/chat`, `/docs`, and `/openapi.json`.
+Chat accepts `{model, messages, stream}`. With `stream: true`, it returns NDJSON
+`model`, `text`, and `done` events, or an `error` event. Only the `done` event
+contains a validated message that is safe to pass to the tool dispatcher.
+
+To deploy the site, set the service binding in `worker/wrangler.jsonc` to your API
+Worker, then run `npm ci && npm run deploy` in `worker`.
 
 ```sh
 export BAILOUT_API_URL=https://your-worker.your-subdomain.workers.dev
@@ -156,4 +191,4 @@ for development. The public service intentionally requires no login, so use your
 Worker and key if you need a separate quota. Cloudflare hosting limits are separate
 from model prices; no paid infrastructure subscription is required by this repository.
 
-MIT licensed. Inspired by the small, shell-like feel of [fx](https://fx.sh/).
+MIT licensed. Inspired by [Pi](https://pi.dev/) and [fx](https://fx.sh/).

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A tiny, open-source coding agent for your terminal. One Bash tool, free models, and full control. Install on Apple Silicon or Linux in one command.">
+  <meta name="theme-color" content="#b7f567">
+  <meta property="og:title" content="bailout — small agent, full shell">
+  <meta property="og:description" content="A tiny terminal coding agent. Bash is the only tool. Free models are the only models. MIT licensed.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://bailout.bailout-router.workers.dev/">
+  <link rel="canonical" href="https://bailout.bailout-router.workers.dev/">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preload" href="/fonts/space-grotesk.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+  <title>bailout — small agent, full shell</title>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="header">
+    <a href="/" class="brand" aria-label="bailout home"><span class="brand-mark" aria-hidden="true">b<span>↗</span></span>bailout<span class="brand-period">.</span></a>
+    <nav aria-label="Main navigation"><a href="#how-it-works">How it works</a><a href="/docs">Docs</a><a class="button small neutral github" href="https://github.com/storozhenko98/bailout">GitHub <span aria-hidden="true">↗</span></a></nav>
+  </header>
+  <main id="main">
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow"><span class="mini-mark" aria-hidden="true">↗</span> THE TINY TERMINAL CODING AGENT</div>
+        <h1>Small agent.<br><span class="highlight">Full shell.</span></h1>
+        <p class="intro">Ask a question. Fix a bug. Let a tiny, open-source agent get to work in your terminal.</p>
+        <div class="install" id="install">
+          <div class="install-caption"><span>ONE COMMAND. THEN <strong>BAILOUT.</strong></span><span class="install-os">macOS + Linux</span></div>
+          <div class="install-command"><span class="dollar" aria-hidden="true">$</span><code id="install-code">curl -fsSL https://bailout.bailout-router.workers.dev/install.sh | bash</code><button class="copy" data-copy="install-code" aria-label="Copy install command"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="1"/><path d="M16 8V4H4v12h4"/></svg><span class="copy-label">Copy</span></button></div>
+        </div>
+        <p class="install-note">Apple Silicon · Linux x64 & ARM64 <span>Requires Bash & curl.</span></p>
+        <a class="text-link" href="https://github.com/storozhenko98/bailout/releases/latest">Or download a binary <span aria-hidden="true">↗</span></a>
+      </div>
+      <div class="demo-wrap">
+        <div class="demo-label"><span class="tape">LESS HARNESS. MORE DOING.</span><span class="demo-caption">Example session</span></div>
+        <div class="terminal" aria-label="Example bailout terminal session">
+          <div class="terminal-bar"><span class="terminal-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>~/projects/hello-world</span><span class="terminal-icon" aria-hidden="true">↗</span></div>
+          <div class="terminal-content" id="demo-content">
+            <div class="terminal-brand">bailout <span>v0.2.0</span></div>
+            <div class="terminal-muted">auto · free models · full access</div>
+            <div class="terminal-prompt"><span>›</span> fix the off-by-one error in range.ts</div>
+            <p>I’ll check the function and its tests.</p>
+            <div class="terminal-tool"><strong>bash</strong><div><span>$</span> cat src/range.ts</div><div class="terminal-muted">│ for (let i = start; i &lt;= end; i++)</div><div class="terminal-muted">│ // end is documented as exclusive</div></div>
+            <p>The loop includes <code>end</code>. I’ll change<br class="demo-break"> <code>&lt;=</code> to <code>&lt;</code> and run the tests.</p>
+            <div class="terminal-tool"><strong>bash</strong><div><span>$</span> npm test</div><div class="terminal-success">✓ 8 tests passed</div></div>
+            <p class="terminal-final">Fixed the boundary. All tests pass.</p>
+            <div class="terminal-footer">free model <span>·</span> Bash only</div>
+            <div class="terminal-ready"><span>›</span> <i aria-hidden="true"></i></div>
+          </div>
+        </div>
+        <div class="demo-bottom"><span><kbd>ctrl</kbd> + <kbd>c</kbd> <span>you’re in control</span></span><a href="/docs#keyboard">Meet your new prompt <span aria-hidden="true">↗</span></a></div>
+      </div>
+    </section>
+    <div class="facts" aria-label="bailout at a glance"><span><b>01</b> BASH TOOL</span><span><b>$0</b> MODEL PRICING</span><span><b>&lt;6 MB</b> NATIVE BINARY</span><span><b>MIT</b> OPEN SOURCE</span></div>
+    <section class="how section" id="how-it-works">
+      <div class="section-heading"><span class="eyebrow">A SHORT PATH FROM “HMM” TO “DONE”</span><h2>Right where you work.</h2><p>Your files. Your commands. Your terminal.</p></div>
+      <div class="steps">
+        <article><span class="step-number">01 /</span><h3>Give it a task.</h3><p>Start <code>bailout</code> in your project. Ask a question, describe a change, or point it at a failing test.</p><code class="example">› why is this test failing?</code></article>
+        <article><span class="step-number">02 /</span><h3>Watch it work.</h3><p>The agent uses Bash when it needs to. You see the commands and results, with captured output one command away.</p><code class="example">$ cargo test</code></article>
+        <article><span class="step-number">03 /</span><h3>Keep the wheel.</h3><p>Interrupt with Ctrl-C. Change models with <code>/model</code>. Ask a follow-up without starting over.</p><code class="example">› now add an edge-case test</code></article>
+      </div>
+    </section>
+    <section class="free section" id="free-models">
+      <div class="free-stamp" aria-hidden="true"><span>$0</span><small>MODEL PRICING</small></div>
+      <div class="free-copy"><span class="eyebrow">FREE ONLY. BY DESIGN.</span><h2>A hard limit.<br>Not a billing surprise.</h2><p>Every request checks current model and provider prices. The router allows only verified free models and sends a zero-price cap to OpenRouter.</p><p class="fine-print">Free capacity is shared and can run out. When it does, bailout stops or tries another verified free model. It never switches to a paid one.</p><a class="text-link" href="/docs#free-models">Read how routing works <span aria-hidden="true">↗</span></a></div>
+    </section>
+    <section class="faq section" id="questions">
+      <div class="section-heading"><span class="eyebrow">FAIR QUESTIONS</span><h2>Before you <code>curl</code>.</h2></div>
+      <div class="faq-list">
+        <details><summary>What’s the catch with free models?<span aria-hidden="true">+</span></summary><p>Model quality and availability vary. The hosted service shares an OpenRouter quota, so it can rate-limit. This is a small open-source project, not a promise of unlimited inference. You can run your own FastAPI backend with your own key for a separate quota.</p></details>
+        <details><summary>Do I need an API key or an account?<span aria-hidden="true">+</span></summary><p>No account or key is needed to use the hosted service. Install the binary and run <code>bailout</code>. The service key stays on the server and is never shipped in the binary.</p></details>
+        <details><summary>What can it do on my machine?<span aria-hidden="true">+</span></summary><p>Bailout runs Bash with your user’s permissions. Commands execute automatically, so it can read and edit files, run programs, and access the network. It is not a sandbox. Use a container or disposable checkout when you want isolation.</p></details>
+        <details><summary>What leaves my machine?<span aria-hidden="true">+</span></summary><p>Your conversation and tool output go through the API to OpenRouter and the selected model provider. Their data policies apply. Bailout does not save conversations on the server or record prompts in application logs. Keep secrets out of prompts and files the model reads.</p></details>
+        <details><summary>Why another coding agent?<span aria-hidden="true">+</span></summary><p>To explore how much a very small agent can do with one general-purpose tool. The client is Rust, the tool is Bash, and the models are free. The source is small enough to read, change, and host yourself. It takes inspiration from Pi’s minimal core and fx’s small native footprint.</p></details>
+      </div>
+    </section>
+    <section class="last-call"><h2>Try it on that<br>thing you’ve been avoiding.</h2><a class="button" href="#install">Get bailout <span aria-hidden="true">↗</span></a></section>
+  </main>
+  <footer><a class="brand" href="/">bailout<span class="brand-period">.</span></a><p>Small on purpose. Open by default.</p><div><a href="/docs">Docs</a><a href="https://api.bailout-router.workers.dev/docs">API</a><a href="https://github.com/storozhenko98/bailout">Source ↗</a><span>MIT LICENSE</span></div></footer>
+  <div id="copy-status" class="sr-only" role="status" aria-live="polite"></div>
+</body>
+</html>
