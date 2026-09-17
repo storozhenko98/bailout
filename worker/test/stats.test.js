@@ -67,7 +67,11 @@ test('cold concurrent snapshots share one download refresh; unavailable is not a
 test('public snapshot cache is canonical and does not invoke admission or copy user data', async () => {
   let calls = 0, cached;
   const cache = { match: async request => { assert.equal(request.url, 'https://api.bailout.dev/v1/stats'); return cached?.clone(); },
-    put: async (request, result) => { assert.equal(request.url, 'https://api.bailout.dev/v1/stats'); cached = result; } };
+    put: async (request, result) => {
+      assert.equal(request.url, 'https://api.bailout.dev/v1/stats');
+      assert.equal(result.headers.get('Cache-Control'), 'public, max-age=60', 'edge cache stays bounded');
+      cached = result;
+    } };
   const env = { EDGE_GLOBAL_LIMIT: { limit: async () => ({ success: true }) }, BUDGET: {
     idFromName: name => name, get: id => { assert.equal(id, 'global-v1'); return { fetch: async url => {
       calls++; assert.equal(url, 'https://budget/stats'); return Response.json({ requests: { total: 123 } });
@@ -75,7 +79,7 @@ test('public snapshot cache is canonical and does not invoke admission or copy u
   } };
   for (let i = 0; i < 4; i++) {
     const result = await publicStatsResponse(env, cache);
-    assert.equal(result.headers.get('Cache-Control'), 'public, max-age=60');
+    assert.equal(result.headers.get('Cache-Control'), 'no-store', 'browser must not retain a stale counter snapshot');
     assert.equal((await result.json()).requests.total, 123);
   }
   assert.equal(calls, 1);

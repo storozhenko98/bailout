@@ -40,7 +40,8 @@ rename this object. No prompts, commands, file contents, credentials, user IDs,
 client IPs or per-request event records are added to the statistics table.
 
 Visible pages refresh once per minute and stop polling while hidden. Cloudflare
-caches the response for 60 seconds using a fixed key; arbitrary query parameters
+caches the response internally for 60 seconds using a fixed key; browser responses
+use `no-store` to avoid a longer zone-level browser cache. Arbitrary query parameters
 cannot bypass it. GitHub counts refresh at most once per 15 minutes across the
 whole service, including after failures or restarts. GitHub may update its source
 counts later. Request totals usually lag by up to two minutes.

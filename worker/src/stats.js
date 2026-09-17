@@ -78,7 +78,7 @@ export class PublicStats {
 export async function publicStatsResponse(env, cache = caches.default) {
   const key = new Request('https://api.bailout.dev/v1/stats');
   const cached = await cache.match(key);
-  if (cached) return cached;
+  if (cached) return browserResponse(cached);
   const burst = await env.EDGE_GLOBAL_LIMIT.limit({ key: 'public-stats' });
   if (!burst.success) return Response.json({ error: 'Statistics are temporarily busy.' }, { status: 429, headers: { 'Retry-After': '60', 'Access-Control-Allow-Origin': 'https://bailout.dev' } });
   try {
@@ -88,9 +88,17 @@ export async function publicStatsResponse(env, cache = caches.default) {
     const response = new Response(result.body, { headers: { 'Content-Type': 'application/json',
       'Cache-Control': 'public, max-age=60', 'Access-Control-Allow-Origin': 'https://bailout.dev', 'X-Content-Type-Options': 'nosniff' } });
     await cache.put(key, response.clone());
-    return response;
+    return browserResponse(response);
   } catch {
     return Response.json({ error: 'Statistics are temporarily unavailable.' }, { status: 503,
       headers: { 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': 'https://bailout.dev' } });
   }
+}
+
+function browserResponse(cached) {
+  const result = new Response(cached.body, cached);
+  // Keep the edge's explicit 60-second Cache API entry, but prevent the zone's
+  // longer Browser Cache TTL from freezing counters in a visitor's tab.
+  result.headers.set('Cache-Control', 'no-store');
+  return result;
 }

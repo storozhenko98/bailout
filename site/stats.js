@@ -36,7 +36,7 @@ if (root) {
     if (document.hidden || running) return;
     running = true;
     try {
-      const result = await fetch('/v1/stats', { credentials: 'omit', referrerPolicy: 'no-referrer', signal: AbortSignal.timeout(8000) });
+      const result = await fetch('/v1/stats', { cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', signal: AbortSignal.timeout(8000) });
       if (!result.ok) throw new Error('Statistics unavailable');
       const data = await result.json();
       for (const key of ['downloads', 'requests']) {
