@@ -88,6 +88,9 @@ class Terminal:
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack('HHHH', 32, 100, 0, 0))
         self.buffer = b''
         self.closed = False
+        # The welcome banner also contains "  › ". Wait past it so tests send
+        # input to the editor, not to startup before cancellation is reset.
+        self.expect('/shell local terminal   /model choose a model   /help')
     def send(self, text): os.write(self.fd, text.encode() if isinstance(text, str) else text)
     def expect(self, text, timeout=10):
         needle = text.encode()
