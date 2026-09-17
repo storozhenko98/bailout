@@ -65,11 +65,12 @@ test('IPv6 addresses in a /64 and mapped IPv4 cannot evade identity grouping', (
 });
 
 function runtime(allowance, api) {
-  return new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'gateway', modules: ['gateway.js', 'budget.js'].map(name => ({type:'ESModule', path:fileURLToPath(new URL('../src/' + name, import.meta.url))})), compatibilityDate: '2026-09-17',
+  return new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'gateway', modules: ['gateway.js', 'budget.js', 'stats.js'].map(name => ({type:'ESModule', path:fileURLToPath(new URL('../src/' + name, import.meta.url))})), compatibilityDate: '2026-09-17',
     bindings: { BUDGET_ALLOWANCE_MICRO_USD: String(allowance), SERVICE_PAUSED: 'false' },
     durableObjects: { BUDGET: { className: 'BudgetGuard', useSQLite: true } },
     ratelimits: { EDGE_IP_LIMIT: { namespace_id: '1005', simple: { limit: 60, period: 60 } }, EDGE_GLOBAL_LIMIT: { namespace_id: '1006', simple: { limit: 240, period: 60 } } },
     serviceBindings: { API: api },
+    outboundService: () => Response.json([]),
   }] }));
 }
 
@@ -82,6 +83,27 @@ test('real Workers runtime serializes concurrent reservations; denied calls neve
     assert.equal(upstream, 2);
     for (const r of responses.filter(r => r.status !== 200)) { assert.equal(r.status, 503); assert.ok(Number(r.headers.get('Retry-After')) > 0); assert.equal((await r.json()).code, 'budget_exhausted'); }
     assert.equal((await mf.dispatchFetch('https://api.test/health')).status, 200);
+    const stats = await mf.dispatchFetch('https://api.test/v1/stats');
+    assert.equal(stats.status, 200, 'stats remain readable after the allowance is exhausted');
+    assert.equal((await stats.json()).requests.total, 2, 'only the two admitted backend requests count');
+  } finally { await mf.dispose(); }
+});
+
+test('only successful chat acceptance counts; public stats cannot write or expose internal records', async () => {
+  let responseStatus = 400;
+  const mf = runtime(35000000, async () => new Response('{}', { status: responseStatus }));
+  const opts = { method: 'POST', headers: { 'CF-Connecting-IP': '192.0.2.80', 'Content-Type': 'application/json' }, body: '{}' };
+  try {
+    assert.equal((await mf.dispatchFetch('https://api.test/v1/chat', opts)).status, 400);
+    responseStatus = 200;
+    assert.equal((await mf.dispatchFetch('https://api.test/v1/models', { headers: opts.headers })).status, 200);
+    assert.equal((await mf.dispatchFetch('https://api.test/v1/chat', { ...opts, headers: { ...opts.headers, 'Content-Type': 'text/plain' } })).status, 415);
+    assert.equal((await mf.dispatchFetch('https://api.test/v1/chat', opts)).status, 200);
+    assert.equal((await mf.dispatchFetch('https://api.test/record-request', opts)).status, 404);
+    assert.equal((await mf.dispatchFetch('https://api.test/v1/stats', opts)).status, 405);
+    const result = await (await mf.dispatchFetch('https://api.test/v1/stats')).json();
+    assert.equal(result.requests.total, 1);
+    assert.deepEqual(Object.keys(result).sort(), ['docs', 'downloads', 'requests']);
   } finally { await mf.dispose(); }
 });
 

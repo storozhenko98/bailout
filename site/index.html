@@ -14,6 +14,7 @@
   <link rel="preload" href="/fonts/space-grotesk.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
+  <script src="/stats.js" type="module"></script>
   <title>bailout — the harness meant to be deleted</title>
 </head>
 <body>
@@ -56,6 +57,12 @@
       </div>
     </section>
     <div class="facts" aria-label="bailout at a glance"><span><b>01</b> BASH TOOL</span><span><b>$0</b> MODEL PRICING</span><span class="size-fact"><b>622.0 KB</b><span>MAC ARM64<br>UNCOMPRESSED</span></span><span><b>MIT</b> OPEN SOURCE</span></div>
+    <div class="usage" aria-label="Public usage totals">
+      <div class="usage-metric" data-stat="downloads"><span class="stat-dot" aria-hidden="true"></span><span class="stat-state sr-only">Loading total: </span><strong>—</strong><span class="stat-label">downloads</span></div>
+      <div class="usage-metric" data-stat="requests"><span class="stat-dot" aria-hidden="true"></span><span class="stat-state sr-only">Loading total: </span><strong>—</strong><span class="stat-label">requests processed</span></div>
+      <a href="/docs/#public-stats">How we count <span aria-hidden="true">↗</span></a>
+      <noscript><span>Enable JavaScript to load the live totals.</span></noscript>
+    </div>
     <section class="how section" id="how-it-works">
       <div class="section-heading"><span class="eyebrow">AN AGENT BEFORE YOUR AGENT</span><h2>For the gap in your setup.</h2><p>When your normal tools aren’t there to help.</p></div>
       <div class="steps">
@@ -79,6 +86,7 @@
         <details><summary>Is help always available?<span aria-hidden="true">+</span></summary><p>The hosted service uses free models and shares a limited quota. Availability and model quality vary. Rate limits or the shared hosting cutoff pause requests with a clear message. It never falls back to paid models. <a href="/docs/#service-limits">Read the limits</a>. You can host your own router for a separate quota.</p></details>
         <details><summary>What can it do on my machine?<span aria-hidden="true">+</span></summary><p>Bailout runs Bash with your user’s permissions. Commands execute automatically, so it can read and edit files, run programs, and access the network. It is not a sandbox. Use a container or disposable checkout when you want isolation.</p></details>
         <details><summary>What leaves my machine?<span aria-hidden="true">+</span></summary><p>Your conversation and captured tool output go through the API to OpenRouter and the selected model provider. Their data policies apply. Bailout does not save conversations on the server or record prompts in application logs. Keep secrets out of prompts and files the model reads.</p></details>
+        <details><summary>Do you track usage?<span aria-hidden="true">+</span></summary><p>Just aggregate totals: binary downloads from GitHub and model requests accepted by the hosted backend. No analytics cookies, installation IDs, location tracking, or extra telemetry calls from the CLI. Downloads include updates and repeat downloads; they aren’t unique users. Requests have been counted since September 17, 2026, including retries and streams that may fail after starting. The green dots mean the totals are fresh, not that a model is available. Our separate abuse limits use short-lived daily IP hashes. <a href="/docs/#public-stats">How the counters work</a>.</p></details>
         <details><summary>Why a harness you plan to delete?<span aria-hidden="true">+</span></summary><p>Because you sometimes need an agent before you can set up your agent—or a working one to repair the one that broke. Bailout is a small, independent way to bridge that gap. Success is getting you back to your normal tools.</p></details>
       </div>
     </section>

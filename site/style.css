@@ -20,3 +20,6 @@
 .size-fact>span{font-size:11px;line-height:1.5}.faq-list details a{text-decoration:underline;text-underline-offset:3px}@media(max-width:760px){.facts .size-fact{flex-direction:column;gap:2px}.facts .size-fact b{font-size:24px}.size-fact>span{text-align:center;font-size:10px}}
 
 .size-table th{min-width:0}@media(max-width:760px){.size-table td,.size-table th{font-size:12px;padding:12px 6px}}
+
+.usage{display:flex;justify-content:center;align-items:center;gap:40px;padding:22px 5vw;border-bottom:var(--line);flex-wrap:wrap}.usage-metric{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--muted)}.usage-metric strong{font-size:27px;line-height:1;font-weight:700;letter-spacing:-1px;color:var(--ink);font-variant-numeric:tabular-nums}.stat-dot{width:8px;height:8px;flex-shrink:0;border-radius:50%;background:#a4aba0}.is-live .stat-dot{background:#4e901e;box-shadow:0 0 0 4px #edf3e8}.usage>a{font-size:12px;text-decoration:underline;text-underline-offset:4px}.usage>a:hover{color:#367600}.usage noscript{font-size:12px;color:var(--muted)}
+@media(max-width:760px){.usage{gap:18px 26px;padding:24px}.usage-metric{flex-wrap:wrap;justify-content:center;gap:9px}.usage-metric>span:last-child{width:100%;text-align:center;font-size:12px}.usage-metric strong{font-size:25px}.usage>a{width:100%;text-align:center}}

@@ -112,3 +112,9 @@ The gate stores hourly aggregate reservations and daily IP hashes with short
 expiry. Hashes are pseudonyms, not anonymization. Client rows expire after the
 following UTC day and are cleaned when the gate next processes traffic. No
 prompts, file contents or credentials are stored in the ledger.
+
+Separate [public usage totals](public-stats.md) retain a lifetime request integer
+from the time counting is enabled, plus aggregate GitHub binary-download counts.
+The cached, read-only `/v1/stats` endpoint does not consume the model allowance or
+call Python/OpenRouter and stays available during a cutoff. It has a separate
+burst-limit key; cache misses and counter writes still incur hosting work.

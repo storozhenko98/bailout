@@ -159,6 +159,13 @@ free does not mean zero data retention. The Worker does not store conversations 
 log request bodies. The gateway retains short-lived daily IP hashes and aggregate quota counters; see [retention details](docs/service-limits.md). Worker observability is disabled. Do not include credentials in
 prompts or ask the agent to read secret files.
 
+The homepage publishes aggregate download and model-request totals. Downloads
+come from GitHub's public binary-asset counts (including updates and repeats).
+The request counter starts when enabled; it counts hosted chat requests accepted
+by the backend, including streams that may fail later. There are no analytics
+cookies, installation IDs, location analytics, or additional CLI telemetry calls.
+See [how the public counters work](docs/public-stats.md).
+
 ## Measured release sizes
 
 From the [published v0.4.0 assets](https://github.com/storozhenko98/bailout/releases/tag/v0.4.0), verified against SHA-256 checksums:

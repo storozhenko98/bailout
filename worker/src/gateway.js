@@ -1,10 +1,19 @@
 import { BudgetLedger, budgetRefusal, refusal } from './budget.js';
+import { PublicStats, publicStatsResponse } from './stats.js';
 
 export class BudgetGuard {
   constructor(ctx, env) {
     this.ledger = new BudgetLedger(ctx.storage, Number(env.BUDGET_ALLOWANCE_MICRO_USD));
+    this.stats = new PublicStats(ctx.storage);
   }
   async fetch(request) {
+    const path = new URL(request.url).pathname;
+    if (path === '/stats' && request.method === 'GET') return Response.json(await this.stats.snapshot());
+    if (path === '/record-request' && request.method === 'POST') {
+      this.stats.recordRequest();
+      return new Response(null, { status: 204 });
+    }
+    if (path !== '/admit' || request.method !== 'POST') return new Response(null, { status: 404 });
     const { client, kind } = await request.json();
     const result = this.ledger.admit(client, kind);
     return response(result);
@@ -42,6 +51,10 @@ let budgetReset = 0;
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === '/v1/stats') {
+      if (request.method !== 'GET') return response({ status: 405, body: { error: 'Method not allowed.', code: 'method_not_allowed' } });
+      return publicStatsResponse(env);
+    }
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
       return response({ status: 200, body: { ok: true, service: 'bailout', version: '0.4.0', free_only: true,
         framework: 'FastAPI', status: '/v1/status', docs: 'https://bailout.dev/docs/#service-limits' } });
@@ -94,6 +107,12 @@ export default {
       // also enters this gateway; caller-supplied forwarding/auth headers vanish.
       const headers = new Headers({ 'Content-Type': 'application/json' });
       const upstream = await env.API.fetch(new Request(`https://api.internal${url.pathname}`, { method: request.method, headers, body, signal: request.signal }));
+      if (isChat && upstream.ok) {
+        // Only a successful backend acceptance counts, once per HTTP request.
+        // Streaming can still fail later. No user data reaches the counter.
+        try { await stub.fetch('https://budget/record-request', { method: 'POST' }); }
+        catch { /* Statistics must not interrupt a model response. */ }
+      }
       const result = new Response(upstream.body, upstream);
       result.headers.set('Cache-Control', 'no-store');
       result.headers.set('Access-Control-Allow-Origin', 'https://bailout.dev');
