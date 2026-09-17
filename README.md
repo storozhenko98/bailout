@@ -31,13 +31,13 @@ what changed, back up the config, repair it, and verify that your main tool work
 
 **A quick exit.** The useful outcome is your usual setup working again. Bailout has
 no daemon, account setup, persistent conversation store, or project scaffolding.
-It is one native binary: **604.7 KB on Apple Silicon** in v0.3.0. Every release stays under
+It is one native binary: **622.0 KB on Apple Silicon** in v0.4.0. Every release stays under
 6,000,000 bytes. Linux releases are statically linked with musl.
 
 ```text
 $ bailout
 
-  bailout v0.3.0
+  bailout v0.4.0
   ~
 
   › auto · free models · full access
@@ -161,13 +161,13 @@ prompts or ask the agent to read secret files.
 
 ## Measured release sizes
 
-From the [published v0.3.0 assets](https://github.com/storozhenko98/bailout/releases/tag/v0.3.0), verified against SHA-256 checksums:
+From the [published v0.4.0 assets](https://github.com/storozhenko98/bailout/releases/tag/v0.4.0), verified against SHA-256 checksums:
 
 | Platform | Native binary (uncompressed) | Download (.tar.gz) |
 | --- | ---: | ---: |
-| macOS ARM64 | 604,704 bytes | 300,607 bytes |
-| Linux x64 | 807,712 bytes | 398,440 bytes |
-| Linux ARM64 | 725,248 bytes | 378,528 bytes |
+| macOS ARM64 | 622,048 bytes | 315,190 bytes |
+| Linux x64 | 840,480 bytes | 413,457 bytes |
+| Linux ARM64 | 790,784 bytes | 394,345 bytes |
 
 ## Build and test
 
