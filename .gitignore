@@ -1,0 +1,9 @@
+/target/
+/dist/
+node_modules/
+.wrangler/
+.env*
+.dev.vars*
+*.secret
+.DS_Store
+

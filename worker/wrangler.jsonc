@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "bailout",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-17",
+  "workers_dev": true,
+  "observability": { "enabled": false },
+  "ratelimits": [
+    { "name": "IP_LIMIT", "namespace_id": "1001", "simple": { "limit": 20, "period": 60 } },
+    { "name": "SHARED_LIMIT", "namespace_id": "1002", "simple": { "limit": 18, "period": 60 } }
+  ]
+}

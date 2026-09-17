@@ -1,0 +1,28 @@
+name: check
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        runner: [macos-14, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo test --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci && npm test
+        working-directory: worker
+      - run: cargo build --release --locked && python3 scripts/check-size.py target/release/bailout
+      - run: python3 scripts/smoke.py target/release/bailout
+      - run: bash -n install.sh
+      - run: python3 scripts/test-installer.py

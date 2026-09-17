@@ -1,0 +1,20 @@
+[package]
+name = "bailout"
+version = "0.1.0"
+edition = "2021"
+description = "A tiny, fully automatic terminal coding agent. One tool: bash. Free models only."
+license = "MIT"
+repository = "https://github.com/storozhenko98/bailout"
+rust-version = "1.85"
+
+[dependencies]
+serde_json = "1.0"
+libc = "0.2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
