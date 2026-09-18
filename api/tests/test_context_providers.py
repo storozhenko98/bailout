@@ -7,7 +7,7 @@ import httpx
 from types import SimpleNamespace
 
 from conftest import free_accounts, qualification
-from context import budget, input_bound
+from context import budget, input_bound, quota_tokens
 from providers import Providers, fingerprint, account_verified, zai_free_rows
 from ranking import rank, qualified
 from router import Router, BASH_TOOL, Failure, upstream_failure
@@ -66,6 +66,17 @@ async def test_context_exhaustion_never_reserves_or_sends_or_drops_history():
     assert caught.value.code == "context_exhausted"
     assert not meter.calls and not stub.inferences()
     assert len(request["messages"][0]["content"]) == 150000
+
+
+def test_quota_estimate_does_not_treat_every_code_byte_as_a_token():
+    messages = [dict(role="user", content="print('ready')\n" * 400)]
+    # A modest coding conversation must not become permanently unroutable at
+    # Groq's operator ceiling merely because the context check uses byte bounds.
+    assert input_bound(messages, [BASH_TOOL]) + 2048 > 7800
+    assert 2048 < quota_tokens(messages, [BASH_TOOL], 2048) < 7800
+    # The separate estimate must never loosen the context fit check.
+    large = [dict(role="user", content="你🙂" * 5000)]
+    assert budget({"context_length": 32768}, [], large, [BASH_TOOL]) is None
 
 
 async def test_provider_context_error_switches_without_poisoning_model_health():

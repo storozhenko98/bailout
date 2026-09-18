@@ -10,7 +10,7 @@ from email.utils import parsedate_to_datetime
 from decimal import Decimal, InvalidOperation
 from time import monotonic
 from capacity import LocalCapacity
-from context import MAX_BODY, MAX_MESSAGES, budget
+from context import MAX_BODY, MAX_MESSAGES, budget, quota_tokens
 from providers import Providers, ORIGINS, fingerprint
 from ranking import rank, qualified
 
@@ -440,7 +440,7 @@ class Router:
                             else self.providers.body(model, messages, data["stream"], fit["output_tokens"]))
                     if source == "openrouter":
                         body["max_tokens"] = fit["output_tokens"]
-                    tokens = fit["input_tokens_upper_bound"] + fit["output_tokens"]
+                    tokens = quota_tokens(messages, [BASH_TOOL], fit["output_tokens"])
                     permit = await self.capacity.reserve(source, model["id"], tokens, **({"quota": model["quota"]} if model.get("quota") else {}))
                     if not permit["ok"]:
                         delay = permit.get("retry_after_seconds", 0)

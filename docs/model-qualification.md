@@ -30,6 +30,13 @@ There is a separate 4,000,000-byte HTTP-body ceiling and 2,048-message ceiling t
 bound transport and parsing work. The CLI leaves space below that for the envelope.
 No automatic conversation summarization is implemented.
 
+Token-rate admission uses a separate estimate of two UTF-8 bytes per input token,
+plus framing and the full output allowance, then reconciles reported actual usage.
+This estimate can be wrong; upstream rate limits remain authoritative and may
+return 429. It never relaxes context bounds or free-only billing checks. Applying
+the one-token-per-byte context bound to rate quotas would reject ordinary coding
+conversations well before their actual token allowance.
+
 ## Evidence, not model-name scoring
 
 `bench/run.py` runs the actual Rust harness with its production system prompt and

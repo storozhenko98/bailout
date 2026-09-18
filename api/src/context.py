@@ -21,6 +21,19 @@ def input_bound(messages, tools):
     return len(content) + 1024 + 32 * len(messages)
 
 
+def quota_tokens(messages, tools, output):
+    """Reserve estimated usage, separately from the strict context upper bound.
+
+    Two UTF-8 bytes per input token is deliberately cautious for ordinary code,
+    but is not an exact tokenizer. Provider rate limits remain authoritative;
+    actual reported usage reconciles this reservation after each response.
+    Billing eligibility and hard-zero-price routing do not use this estimate.
+    """
+    content = json.dumps({"messages": messages, "tools": tools}, ensure_ascii=False,
+                         separators=(",", ":")).encode("utf-8")
+    return math.ceil(len(content) / 2) + 1024 + 32 * len(messages) + output
+
+
 def budget(model, endpoints, messages, tools, output=4096):
     """Choose only endpoints that fit, including the answer and 10% headroom."""
     prompt = input_bound(messages, tools)
