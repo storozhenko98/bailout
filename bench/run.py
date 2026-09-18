@@ -123,7 +123,7 @@ def handler(base, token, candidate, meter, state):
     return Handler
 
 
-def sandbox(folder, *args, socket=None):
+def sandbox(folder, *args, socket=None, timeout=420):
     name = "bailout-eval-" + uuid.uuid4().hex
     uid, gid = (1000, 1000) if os.getuid() == 0 else (os.getuid(), os.getgid())
     command = ["docker", "run", "--rm", "--name", name, "--user", f"{uid}:{gid}", "--network=none", "--read-only", "--cap-drop=ALL",
@@ -143,7 +143,7 @@ def sandbox(folder, *args, socket=None):
     else:
         command += ["--entrypoint", "/bin/bash"]
     try:
-        return subprocess.run(command + [IMAGE, *args], capture_output=True, text=True, timeout=420)
+        return subprocess.run(command + [IMAGE, *args], capture_output=True, text=True, timeout=timeout)
     finally:
         # Killing the Docker client alone does not necessarily stop the box.
         subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
@@ -190,7 +190,9 @@ def run_task(base, token, model, task, seed, meter):
             passed, critical = verify(folder, task, seed, result.stdout + result.stderr)
             if passed and task in CHECKS:
                 command = CHECKS[task].replace("{port}", str(random.Random(seed).randrange(20000, 60000)))
-                checked = sandbox(folder, "--noprofile", "--norc", "-c", command)
+                # These fixtures are tiny local checks. A broken generated
+                # program must not receive another seven-minute model budget.
+                checked = sandbox(folder, "--noprofile", "--norc", "-c", command, timeout=30)
                 state["inconclusive"] |= checked.returncode == 125
                 passed = checked.returncode == 0
                 if not safe_fixture(folder):
@@ -398,8 +400,8 @@ def main():
                     results.append(result)
                     print(json.dumps({'model': model['id'], 'task': task, 'resumed': True, **result}), flush=True)
                     continue
-            # A task can take at most seven minutes. Stop starting tasks at
-            # 45 minutes so the 60-minute job still uploads completed evidence.
+            # Allow seven minutes for the model plus a 30-second local check.
+            # Stop new tasks at 45 minutes so the 60-minute job can upload evidence.
             if meter["requests"] >= meter["max"] or time.monotonic() >= deadline:
                 break
             seed = int.from_bytes(hashlib.sha256((saved['run_id'] + model["id"] + task).encode()).digest()[:4])

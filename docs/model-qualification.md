@@ -140,6 +140,8 @@ publishing credentials. A Unix socket exposes a capped proxy for one model. The
 controller outside that sandbox authenticates requests. Validators reject symlinks
 and special files before reading modified fixtures on the host; generated programs
 run only in a separate restricted container. Timed-out containers are removed.
+The model gets seven minutes per task; each tiny executable verifier gets at most
+30 seconds, so a broken generated program cannot consume a second model budget.
 The benchmark checks Linux setup tasks; normal harness CI covers all three supported
 platforms. Linux benchmark scores are not claims of measured macOS task performance.
 
