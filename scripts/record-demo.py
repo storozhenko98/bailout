@@ -6,6 +6,7 @@ First build: docker build -t bailout-launch-demo:local -f demo/Dockerfile demo
 Requires Docker. Writes raw terminal output and an asciicast to artifacts/demo.
 No responses, tool calls, downloads, or filesystem outcomes are simulated.
 """
+import argparse
 import codecs
 import fcntl
 import hashlib
@@ -13,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import struct
 import subprocess
@@ -22,9 +24,13 @@ import time
 import pyte
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / 'artifacts/demo'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--scenario', choices=['setup', 'recovery'], default='setup')
+args = parser.parse_args()
+RECOVERY = args.scenario == 'recovery'
+OUT = ROOT / ('artifacts/recovery-demo' if RECOVERY else 'artifacts/demo')
 COLS, ROWS = 96, 26
-NAME = 'bailout-launch-recording'
+NAME = 'bailout-recovery-recording' if RECOVERY else 'bailout-launch-recording'
 OUT.mkdir(parents=True, exist_ok=True)
 if (OUT/'session.cast').exists():
     raise SystemExit('Archive the previous recording before starting another take.')
@@ -43,10 +49,10 @@ class Recording:
         if self.pid == 0:
             fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack('HHHH', ROWS, COLS, 0, 0))
             os.execvp('docker', ['docker', 'run', '--rm', '-it', '--name', NAME,
-                '--hostname', 'fresh-box', '--cpus', '2', '--memory', '2g',
-                '-e', 'PS1=\\[\\e[1;32m\\]root@fresh-box\\[\\e[0m\\]:\\w# ',
-                '-e', "PROMPT_COMMAND=printf '\\033]133;A\\007'",
-                'bailout-launch-demo:local'])
+                '--hostname', 'dev-box' if RECOVERY else 'fresh-box', '--cpus', '2', '--memory', '2g',
+                '-e', 'PS1=\\[\\e[1;32m\\]\\u@\\h\\[\\e[0m\\]:\\w# ',
+                '-e', "PROMPT_COMMAND=printf '\\033]133;D;%s\\007\\033]133;A\\007' \"$?\"",
+                'bailout-recovery-demo:local' if RECOVERY else 'bailout-launch-demo:local'])
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack('HHHH', ROWS, COLS, 0, 0))
         self.raw = b''
         self.shell_markers = 0
@@ -95,17 +101,20 @@ class Recording:
         self.pump(.35)
         os.write(self.fd, b'\r')
 
-    def command(self, text, title=None, timeout=600):
+    def command(self, text, title=None, timeout=600, expected_exit=0):
         if title:
             self.mark(title)
         before = self.shell_markers
         self.type(text)
         self.until(lambda: self.shell_markers > before, timeout)
         self.pump(1.5)
+        statuses = re.findall(rb'\x1b]133;D;(\d+)\x07', self.raw)
+        if not statuses or int(statuses[-1]) != expected_exit:
+            raise RuntimeError(f'Unexpected shell exit status for {text!r}: {statuses[-1:]}')
 
     def save(self):
         header = {'version':2,'width':COLS,'height':ROWS,'timestamp':self.started_wall,
-                  'title':'Bailout: install your tools, then delete the harness',
+                  'title': 'Bailout: repair your agent, then delete the harness' if RECOVERY else 'Bailout: install your tools, then delete the harness',
                   'env':{'TERM':'xterm-256color','SHELL':'/bin/bash'}}
         with (OUT/'session.cast').open('w') as f:
             f.write(json.dumps(header)+'\n')
@@ -116,47 +125,89 @@ class Recording:
 
 rec = Recording()
 verified = False
+checks = []
 try:
     rec.until(lambda: rec.shell_markers > 0, 30)
-    rec.command('opencode --version', 'Fresh box')
+    if RECOVERY:
+        rec.command('opencode run "Reply with: back online"', 'Your usual agent will not start', expected_exit=1)
+        if b'Configuration is invalid' not in rec.raw:
+            raise RuntimeError('The expected config failure was not reproduced')
+    else:
+        rec.command('opencode --version', 'Fresh box', expected_exit=127)
     rec.command('curl -fsSL https://bailout.dev/install.sh | bash', 'One curl')
     rec.mark('No API key. Just ask.')
     rec.type('bailout')
     rec.until(lambda: rec.screen.display[rec.screen.cursor.y].strip() == '›', 60)
     rec.pump(1)
-    rec.type('Install OpenCode from https://opencode.ai/install. Check its version, then stop. Skip sign-in.')
-    rec.mark('Set up your tools')
+    rec.type('OpenCode won\'t start: "Expected PermissionActionConfig, got confirm at permission.bash" in ./opencode.json. Back it up and fix it; keep my other settings.' if RECOVERY else
+        'Install OpenCode from https://opencode.ai/install. Check its version, then stop. Skip sign-in.')
+    rec.mark('Repair your usual agent' if RECOVERY else 'Set up your tools')
     rec.until(lambda: rec.screen.display[rec.screen.cursor.y].strip() == '›', 900)
     rec.pump(3)
-    if b'No free route completed' in rec.raw or b'Stopped at 50 model steps' in rec.raw:
+    if any(message in rec.raw for message in (b'No free route completed', b'Stopped at 50 model steps',
+            b'free model capacity is busy', b'No paid fallback was used.')):
         raise RuntimeError('Model turn did not finish cleanly; retain this take for debugging.')
     before = rec.shell_markers
     rec.type('/exit')
     rec.until(lambda: rec.shell_markers > before, 30)
-    # A new login shell sees installer PATH changes; verify independently of
-    # whatever the model claimed before recording the handoff and uninstall.
-    check = subprocess.run(['docker','exec',NAME,'bash','-lc',
-        'test -x /root/.opencode/bin/opencode && /root/.opencode/bin/opencode --version'],
-        capture_output=True,text=True,timeout=60)
-    (OUT/'verification.txt').write_text(check.stdout+check.stderr)
-    if check.returncode:
-        raise RuntimeError('Tool installation did not verify: '+check.stdout+check.stderr)
-    rec.command('~/.opencode/bin/opencode --version', 'Your agent is ready')
-    rec.command('bailout uninstall', 'The harness meant to be deleted')
-    rec.command('~/.opencode/bin/opencode --version', 'Your tools stay')
+    if RECOVERY:
+        # Read the actual files back without asking the model to grade itself.
+        def read_container(path):
+            return subprocess.check_output(['docker', 'exec', NAME, 'cat', path], timeout=10)
+        fixture = ROOT/'demo/recovery'
+        original = (fixture/'opencode.json').read_bytes()
+        repaired = json.loads(read_container('/root/project/opencode.json'))
+        (OUT/'repaired-config.json').write_text(json.dumps(repaired, indent=2)+'\n')
+        expected = json.loads(original)
+        expected['permission']['bash'] = 'ask'
+        assert repaired == expected, 'Repair changed unrelated settings or relaxed permissions'
+        assert read_container('/root/.config/opencode/opencode.json') == (fixture/'global.json').read_bytes(), 'Global settings changed'
+        assert read_container('/root/project/README.md') == (fixture/'README.md').read_bytes(), 'Project file changed'
+        hashes = subprocess.check_output(['docker', 'exec', NAME, 'find', '/root',
+            '-type', 'f', '-size', '-10k', '-exec', 'sha256sum', '{}', '+'], text=True).splitlines()
+        digest = hashlib.sha256(original).hexdigest()
+        backups = [line[66:] for line in hashes if line.startswith(digest+'  ')
+                   and line[66:] != '/root/project/opencode.json']
+        assert backups, 'Original config backup missing'
+        checks = ['Real config failure reproduced', 'Only invalid permission value repaired',
+                  'Original config backed up', 'Global settings and project file unchanged']
+        (OUT/'verification.txt').write_text(json.dumps({'repaired_config':repaired, 'backups':backups}, indent=2)+'\n')
+        rec.command('bailout uninstall', 'The harness meant to be deleted')
+        output_before = len(rec.raw)
+        rec.command('opencode run "Reply with: back online"', 'Back to your usual agent', timeout=180)
+        # Require an actual response, not just a displayed command or a --version check.
+        response = rec.raw[output_before:].decode('utf-8', errors='replace')
+        response = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', response)
+        assert re.search(r'(?im)^back online\s*$', response), 'OpenCode did not answer'
+        checks.append('OpenCode answered through its free model after Bailout was removed')
+    else:
+        # A new login shell sees installer PATH changes; verify independently of
+        # whatever the model claimed before recording the handoff and uninstall.
+        check = subprocess.run(['docker','exec',NAME,'bash','-lc',
+            'test -x /root/.opencode/bin/opencode && /root/.opencode/bin/opencode --version'],
+            capture_output=True,text=True,timeout=60)
+        (OUT/'verification.txt').write_text(check.stdout+check.stderr)
+        if check.returncode:
+            raise RuntimeError('Tool installation did not verify: '+check.stdout+check.stderr)
+        rec.command('~/.opencode/bin/opencode --version', 'Your agent is ready')
+        rec.command('bailout uninstall', 'The harness meant to be deleted')
+        rec.command('~/.opencode/bin/opencode --version', 'Your tools stay')
+        checks.append('OpenCode runs')
     rec.pump(3)
     check = subprocess.run(['docker','exec',NAME,'bash','-c',
         '! command -v bailout && test -x /root/.opencode/bin/opencode'],capture_output=True,text=True)
     if check.returncode:
         raise RuntimeError('Uninstall preservation check failed')
+    checks += ['Bailout removed', 'Installed tools preserved']
     verified = True
-    print('PASS: real install, public Auto inference, verified tools, removed only Bailout.',flush=True)
+    print('PASS: '+', '.join(checks),flush=True)
 finally:
     rec.save()
     if verified:
         (OUT/'verified.json').write_text(json.dumps({
             'cast_sha256': hashlib.sha256((OUT/'session.cast').read_bytes()).hexdigest(),
-            'checks': ['OpenCode runs', 'Bailout removed', 'Installed tools preserved'],
+            'scenario': args.scenario,
+            'checks': checks,
         }, indent=2)+'\n')
     subprocess.run(['docker','stop','--time','2',NAME],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     os.close(rec.fd)

@@ -33,7 +33,9 @@ distribution, ranking, clicks, or an immediate refresh of old shared messages.
 Metadata follows the [Open Graph protocol](https://ogp.me/).
 
 The `/demo/` page hosts a silent MP4 of a real public-service terminal session,
-with a GIF preview in the GitHub README. It reuses the homepage's share artwork.
+with a GIF preview in the GitHub README. The primary recording repairs a prepared
+OpenCode configuration failure; the earlier installer demo remains available.
+It reuses the homepage's share artwork.
 Video waits are shortened and labeled; the original asciicast retains the full
 timing. See [recording and verification](../demo/README.md). No social post is
 created by building or deploying these assets.

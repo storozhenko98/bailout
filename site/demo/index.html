@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Watch Bailout bootstrap a fresh Linux box, verify OpenCode, then delete itself. A real terminal session using the public free service.">
+  <meta name="description" content="OpenCode will not start. Watch Bailout repair its config, preserve the other settings, then get out of the way. A real repair of a prepared failure.">
   <meta name="theme-color" content="#b7f567">
   <meta name="robots" content="index, follow, max-image-preview:large">
-  <meta property="og:title" content="Fresh box. Working tools. Bailout deleted.">
-  <meta property="og:description" content="Watch a real Bailout setup session. One curl, no local API key, and a harness you can delete when your tools work.">
+  <meta property="og:title" content="Your agent is broken. Get it back.">
+  <meta property="og:description" content="The agent you would ask for help will not start. Bailout repairs its config, then you delete Bailout and get back to work.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://bailout.dev/demo/">
   <meta property="og:site_name" content="bailout">
@@ -18,8 +18,8 @@
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="bailout. The harness meant to be deleted. Get unstuck, then move on.">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Watch bailout set up a fresh machine">
-  <meta name="twitter:description" content="A real terminal session: install Bailout, set up your tools, verify them, then remove the harness.">
+  <meta name="twitter:title" content="Watch bailout fix a broken coding agent">
+  <meta name="twitter:description" content="OpenCode fails to start. Bailout fixes its config. Delete Bailout, then get back to your usual agent.">
   <meta name="twitter:image" content="https://bailout.dev/social/home-x-v1.png">
   <meta name="twitter:image:alt" content="bailout. The harness meant to be deleted. One command. No account. No API key.">
   <link rel="canonical" href="https://bailout.dev/demo/">
@@ -39,26 +39,27 @@
     <nav aria-label="Main navigation"><a href="/docs/">Docs</a><a class="button small neutral github" href="https://github.com/storozhenko98/bailout">GitHub <span aria-hidden="true">↗</span></a></nav>
   </header>
   <main id="main" class="watch">
-    <div class="eyebrow">36 SECONDS · A REAL SETUP SESSION</div>
-    <h1>Get your tools running.<br>Then delete the harness.</h1>
-    <p class="watch-lead">A fresh Linux box. No coding agent. No API key. Here’s the whole trip.</p>
+    <div class="eyebrow">72 SECONDS · GET YOUR AGENT BACK</div>
+    <h1>Get your agent back.<br>Then delete the harness.</h1>
+    <p class="watch-lead">OpenCode won’t start after a config edit. The agent you’d normally ask for help is the thing that needs fixing.</p>
     <figure>
-      <video controls playsinline preload="metadata" poster="/demo/bailout-demo-v1.png" aria-label="Bailout installs OpenCode on a fresh Linux box, then is uninstalled" aria-describedby="recording-note">
-        <source src="/demo/bailout-demo-v1.mp4" type="video/mp4">
-        <a href="/demo/bailout-demo-v1.mp4">Download the terminal recording</a>.
+      <video controls playsinline preload="metadata" poster="/demo/bailout-demo-v2.png" aria-label="Bailout repairs a broken OpenCode configuration, is uninstalled, and OpenCode answers again" aria-describedby="recording-note">
+        <source src="/demo/bailout-demo-v2.mp4" type="video/mp4">
+        <a href="/demo/bailout-demo-v2.mp4">Download the terminal recording</a>.
       </video>
-      <figcaption id="recording-note">Real Ubuntu ARM64 container, public Auto routing. Waits shortened; terminal output unchanged. Silent video. Sign-in is skipped, so no credentials are recorded. <a href="/demo/bailout-demo-v1.cast" download>Original terminal capture with full timing ↗</a></figcaption>
+      <figcaption id="recording-note">A deliberately broken example config, repaired by the real public Bailout service in an Ubuntu ARM64 container. Original session: 4 min 48 sec. Waits shortened; terminal output unchanged. Silent video. No account or API key is added. <a href="/demo/bailout-demo-v2.cast" download>Original terminal capture with full timing ↗</a></figcaption>
     </figure>
-    <div class="watch-actions"><a class="button" href="/#install">Try it on your machine <span aria-hidden="true">↗</span></a><a class="text-link" href="/demo/bailout-demo-v1.mp4" download>Download video <span aria-hidden="true">↗</span></a></div>
+    <div class="watch-actions"><a class="button" href="/#install">Try it on your machine <span aria-hidden="true">↗</span></a><a class="text-link" href="/demo/bailout-demo-v2.mp4" download>Download video <span aria-hidden="true">↗</span></a></div>
     <section class="watch-steps" aria-labelledby="steps-title">
       <h2 id="steps-title">What happens in the recording</h2>
       <ol>
-        <li><strong>Start with missing tools.</strong> <code>opencode</code> is not installed.</li>
+        <li><strong>Your usual agent is broken.</strong> OpenCode exits with a configuration error before it can answer.</li>
         <li><strong>Get a working agent.</strong> Run <code>curl -fsSL https://bailout.dev/install.sh | bash</code>, then <code>bailout</code>. No account or local model key.</li>
-        <li><strong>Ask it to set up the machine.</strong> Ask Bailout to install OpenCode using its official installer URL, then check its version. Authentication is left for the user.</li>
-        <li><strong>Remove the temporary harness.</strong> Run <code>bailout uninstall</code>. OpenCode still runs afterward.</li>
+        <li><strong>Ask for a repair.</strong> Give Bailout the startup error and ask it to back up and repair the config while keeping the other settings. Bailout diagnoses and repairs the invalid permission setting.</li>
+        <li><strong>Get back to your agent.</strong> Run <code>bailout uninstall</code>. OpenCode now answers through its free Big Pickle model.</li>
       </ol>
-      <p>One successful session, not a reliability benchmark. Model responses, speed, and free capacity vary. The installed tools were also verified separately before this recording was published.</p>
+      <p>One successful session, not a reliability benchmark. Model responses, speed, and free capacity vary. Independent checks also verified the config backup, preservation of the other settings and project file, and OpenCode’s response after uninstall.</p>
+      <p><a href="https://github.com/storozhenko98/bailout/tree/main/demo">Reproduce the example from source ↗</a> · <a href="/demo/bailout-demo-v1.mp4">Previous fresh-machine setup demo ↗</a></p>
       <p><a href="/docs/#use">Read the setup & recovery guide ↗</a></p>
     </section>
   </main>

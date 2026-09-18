@@ -19,9 +19,9 @@ and the usual base utilities (including tar and a SHA-256 utility).
 
 [Website](https://bailout.dev) · [Setup & recovery guide](https://bailout.dev/docs/) · [Releases](https://github.com/storozhenko98/bailout/releases/latest)
 
-[![A real Bailout terminal session: install OpenCode on a fresh Linux box, then delete Bailout](site/demo/bailout-demo-v1.gif)](https://bailout.dev/demo/)
+[![OpenCode will not start. Bailout repairs its config, then is deleted.](site/demo/bailout-demo-v2.gif)](https://bailout.dev/demo/)
 
-[Watch the full-size video](https://bailout.dev/demo/). Real Ubuntu ARM64 container, public Auto routing, no local API key. Waits shortened; terminal output unchanged. Sign-in is skipped.
+[Watch the full-size video](https://bailout.dev/demo/). A prepared config failure, repaired by real public Auto inference in an Ubuntu ARM64 container. No local API key. Other settings and the original config backup are checked; OpenCode answers after Bailout is removed. Waits shortened; terminal output unchanged. [Reproduce it](demo/README.md).
 
 ## When you need it
 

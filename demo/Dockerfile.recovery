@@ -1,0 +1,10 @@
+FROM bailout-launch-demo:local
+RUN curl -fsSL https://opencode.ai/install -o /tmp/install-opencode \
+    && bash /tmp/install-opencode --version 1.18.31 \
+    && rm /tmp/install-opencode
+ENV PATH=/root/.opencode/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RUN mkdir -p /root/project /root/.config/opencode
+COPY recovery/global.json /root/.config/opencode/opencode.json
+COPY recovery/opencode.json /root/project/opencode.json
+COPY recovery/README.md /root/project/README.md
+WORKDIR /root/project
