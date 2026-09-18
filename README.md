@@ -31,13 +31,13 @@ what changed, back up the config, repair it, and verify that your main tool work
 
 **A quick exit.** The useful outcome is your usual setup working again. Bailout has
 no daemon, account setup, persistent conversation store, or project scaffolding.
-It is one native binary: **638.6 KB on Apple Silicon** in v0.5.0. Every release stays under
+It is one native binary: **622.0 KB on Apple Silicon** in v0.6.0. Every release stays under
 6,000,000 bytes. Linux releases are statically linked with musl.
 
 ```text
 $ bailout
 
-  bailout v0.5.0
+  bailout v0.6.0
   ~
 
   › auto · free models · full access
@@ -184,13 +184,13 @@ See [how the public counters work](docs/public-stats.md).
 
 ## Measured release sizes
 
-From the [published v0.5.0 assets](https://github.com/storozhenko98/bailout/releases/tag/v0.5.0), verified against SHA-256 checksums:
+From the [published v0.6.0 assets](https://github.com/storozhenko98/bailout/releases/tag/v0.6.0), verified against SHA-256 checksums:
 
 | Platform | Native binary (uncompressed) | Download (.tar.gz) |
 | --- | ---: | ---: |
-| macOS ARM64 | 638,592 bytes | 318,420 bytes |
-| Linux x64 | 844,576 bytes | 417,360 bytes |
-| Linux ARM64 | 790,784 bytes | 397,024 bytes |
+| macOS ARM64 | 622,048 bytes | 315,852 bytes |
+| Linux x64 | 840,480 bytes | 414,874 bytes |
+| Linux ARM64 | 790,784 bytes | 394,937 bytes |
 
 ## Build and test
 
@@ -225,7 +225,7 @@ CI runs the tests and real binary smoke checks on all three supported platforms.
 Tagging `vX.Y.Z` builds native release assets, tests them, enforces the size ceiling,
 and publishes SHA-256 checksums. The installer pins one resolved release version,
 verifies the archive checksum, checks its contents and binary size, then installs
-atomically. Set `BAILOUT_VERSION=v0.5.0` or `BAILOUT_INSTALL_DIR=/your/bin` to override.
+atomically. Set `BAILOUT_VERSION=v0.6.0` or `BAILOUT_INSTALL_DIR=/your/bin` to override.
 It prefers an existing writable PATH location and never uses sudo or modifies shell rc files.
 
 Starting in v0.4.0, each launch checks the official GitHub stable release. A newer
@@ -253,7 +253,10 @@ in `api/wrangler.jsonc` before deploying. Keep Python private. In
 `worker/gateway.wrangler.jsonc`, choose your gateway name and domain and point its
 `API` binding at your Python Worker. Keep workers.dev and preview URLs disabled.
 Bind the Python Worker’s `CAPACITY` namespace to `BudgetGuard` in that gateway.
-Review [the budget policy and operating instructions](docs/service-limits.md).
+For a new deployment, first deploy the gateway with an empty `services` array and
+`SERVICE_PAUSED=true` so its Durable Object exists. Then deploy Python with the
+`CAPACITY` binding, restore the gateway’s `API` service binding, and unpause it.
+For an existing deployment, follow [the upgrade order and operating instructions](docs/service-limits.md).
 
 The Python API needs **Workers Paid** on Cloudflare. Its JSON processing and
 streaming exceed the Free plan's 10 ms CPU allowance; requests can otherwise be
@@ -294,7 +297,7 @@ export BAILOUT_API_URL=https://api.your-domain.example
 bailout
 ```
 
-`BAILOUT_MODEL` sets the default model. `BAILOUT_DEFAULT_API` at compile time changes
+`BAILOUT_DEFAULT_API` at compile time changes
 the binary's built-in backend URL. Runtime API overrides require HTTPS, except localhost
 for development. The public service intentionally requires no login, so use your own
 Worker and key if you need a separate quota. Cloudflare hosting costs and limits are
