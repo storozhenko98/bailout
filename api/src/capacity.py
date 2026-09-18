@@ -23,8 +23,8 @@ class Capacity:
         except Exception:
             raise Failure(503, "Shared provider capacity could not be checked. No further inference was sent.", code="capacity_unavailable", recoverable=False) from None
 
-    async def reserve(self, provider, model, tokens):
-        return await self.call("reserve", provider=provider, model=model, tokens=tokens)
+    async def reserve(self, provider, model, tokens, quota=None):
+        return await self.call("reserve", provider=provider, model=model, tokens=tokens, **({"quota": quota} if quota else {}))
 
     async def settle(self, permit, tokens):
         if permit is not None:
@@ -33,14 +33,26 @@ class Capacity:
     async def cooldown(self, provider, model, seconds):
         return await self.call("cooldown", provider=provider, model=model, seconds=seconds)
 
+    async def rankings(self):
+        return await self.call("rankings")
+
+    async def record(self, model, outcome, latency_ms):
+        return await self.call("outcome", model=model, outcome=outcome, latency_ms=latency_ms)
+
 
 class LocalCapacity:
     """Local development/test transport; production always uses the binding."""
-    async def reserve(self, provider, model, tokens):
+    async def reserve(self, provider, model, tokens, quota=None):
         return {"ok": True, "permit": None}
 
     async def settle(self, permit, tokens):
         pass
 
     async def cooldown(self, provider, model, seconds):
+        pass
+
+    async def rankings(self):
+        return {"models": [], "health": {}}
+
+    async def record(self, model, outcome, latency_ms):
         pass

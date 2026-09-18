@@ -1,22 +1,33 @@
+import type { Env, HttpResult } from "./types.js";
 import { BudgetLedger, budgetRefusal, refusal } from './budget.js';
 import { PublicStats, publicStatsResponse } from './stats.js';
 import { CapacityLedger, PROVIDERS } from './capacity.js';
+import { Rankings } from './rankings.js';
 
 export class BudgetGuard {
-  constructor(ctx, env) {
+  rankings: Rankings; ctx: DurableObjectState; ledger: BudgetLedger; capacity: CapacityLedger; providers: string[]; stats: PublicStats;
+  constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
     this.ledger = new BudgetLedger(ctx.storage, Number(env.BUDGET_ALLOWANCE_MICRO_USD), Number(env.CHAT_ADMISSIONS_PER_MINUTE || 60));
     this.capacity = new CapacityLedger(ctx.storage);
+    this.rankings = new Rankings(ctx.storage);
     this.providers = (env.PROVIDER_POOL || 'openrouter').split(',').filter(p => Object.hasOwn(PROVIDERS, p));
     this.stats = new PublicStats(ctx.storage, Date.now(), fetch, env.GITHUB_STATS_TOKEN);
   }
-  async fetch(request) {
+  async fetch(request: Request) {
     const path = new URL(request.url).pathname;
     // This object has no public HTTP route. Only the private API service can
     // reserve provider attempts; gateway allowlists reject these paths.
+    if (path === '/rankings/publish' && request.method === 'POST') {
+      try { return Response.json(this.rankings.publish(await request.json())); }
+      catch { return Response.json({ error: 'Invalid or older ranking snapshot.' }, { status: 400 }); }
+    }
     if (path.startsWith('/capacity/') && request.method === 'POST') {
-      const data = await request.json();
-      if (path === '/capacity/reserve') return Response.json(this.capacity.reserve(data.provider, data.model, data.tokens));
+      const data = await request.json() as { provider: string; model: string | null; tokens: number; permit: string; seconds: number; outcome: string; latency_ms: number; quota?: { rpm: number; rpd: number; tpm: number; tpd: number } };
+      if (path === '/capacity/benchmark') return response(this.capacity.benchmark());
+      if (path === '/capacity/rankings') return Response.json(this.rankings.snapshot());
+      if (path === '/capacity/outcome') { this.rankings.record(data.model!, data.outcome, data.latency_ms); return Response.json({ ok: true }); }
+      if (path === '/capacity/reserve') return Response.json(this.capacity.reserve(data.provider, data.model!, data.tokens, Date.now(), data.quota));
       if (path === '/capacity/settle') this.capacity.settle(data.permit, data.tokens);
       else if (path === '/capacity/cooldown') this.capacity.cooldown(data.provider, data.model, data.seconds);
       else return new Response(null, { status: 404 });
@@ -33,23 +44,27 @@ export class BudgetGuard {
       return new Response(null, { status: 204 });
     }
     if (path !== '/admit' || request.method !== 'POST') return new Response(null, { status: 404 });
-    const { client, kind } = await request.json();
+    const { client, kind } = await request.json() as { client: string; kind: string };
     const result = this.ledger.admit(client, kind);
-    if (kind === 'status' && result.status === 200) result.body.provider_limits = Object.fromEntries(this.providers.map(p => [p, PROVIDERS[p]]));
+    if (kind === 'status' && result.status === 200) {
+      result.body.provider_limits = Object.fromEntries(this.providers.map(p => [p, PROVIDERS[p]]));
+      const ranking = this.rankings.snapshot();
+      result.body.ranking = { updated_at: ranking.generated_at ?? null, stale: ranking.stale, evaluated_models: ranking.models.length };
+    }
     return response(result);
   }
   async alarm() { await this.stats.refresh(); }
 }
 
-function response({ status, body }) {
-  const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+function response({ status, body }: HttpResult) {
+  const headers: Record<string, string> = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
     'Access-Control-Allow-Origin': 'https://bailout.dev' };
   if (body.retry_after_seconds) headers['Retry-After'] = String(body.retry_after_seconds);
   return Response.json(body, { status, headers });
 }
 
 // IPv6 /64 grouping prevents trivially rotating addresses within one allocation.
-export function clientNetwork(ip) {
+export function clientNetwork(ip: string) {
   if (/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) {
     const parts = ip.split('.').map(Number);
     if (parts.every(x => x <= 255)) return parts.join('.');
@@ -70,14 +85,15 @@ export function clientNetwork(ip) {
 let budgetClosedUntil = 0;
 let budgetReset = 0;
 export default {
-  async fetch(request, env) {
+  async fetch(request: Request, env: Env) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/internal/')) return internal(request, env);
     if (url.pathname === '/v1/stats') {
       if (request.method !== 'GET') return response({ status: 405, body: { error: 'Method not allowed.', code: 'method_not_allowed' } });
       return publicStatsResponse(env);
     }
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
-      return response({ status: 200, body: { ok: true, service: 'bailout', version: '0.6.0', free_only: true,
+      return response({ status: 200, body: { ok: true, service: 'bailout', version: '0.7.0', free_only: true,
         framework: 'FastAPI', status: '/v1/status', docs: 'https://bailout.dev/docs/#service-limits' } });
     }
     const isChat = url.pathname === '/v1/chat';
@@ -98,9 +114,9 @@ export default {
       const stub = env.BUDGET.get(env.BUDGET.idFromName('global-v1'));
       const check = await stub.fetch('https://budget/admit', { method: 'POST', body: JSON.stringify({ client, kind: isChat ? 'chat' : url.pathname === '/v1/status' ? 'status' : 'read' }) });
       if (!check.ok) {
-        const body = await check.json();
+        const body = await check.json() as Record<string, unknown>;
         if (body.code === 'budget_exhausted') {
-          budgetReset = Date.parse(body.resets_at);
+          budgetReset = Date.parse(String(body.resets_at));
           budgetClosedUntil = Math.min(Date.now() + 60_000, budgetReset);
         }
         return response({ status: check.status, body });
@@ -109,7 +125,7 @@ export default {
       let body;
       if (isChat) {
         if (!(request.headers.get('Content-Type') || '').toLowerCase().startsWith('application/json')) return response({ status: 415, body: { error: 'Use application/json.', code: 'invalid_content_type' } });
-        if (Number(request.headers.get('Content-Length')) > 512000) return response({ status: 413, body: { error: 'Conversation exceeds 512 KB. Use /new.', code: 'body_too_large' } });
+        if (Number(request.headers.get('Content-Length')) > 4_000_000) return response({ status: 413, body: { error: 'Conversation exceeds the 4 MB transport limit. History is preserved; use /new.', code: 'body_too_large' } });
         const reader = request.body?.getReader();
         if (!reader) return response({ status: 400, body: { error: 'Missing request body.', code: 'invalid_body' } });
         const chunks = []; let size = 0;
@@ -118,7 +134,7 @@ export default {
             const { done, value } = await reader.read();
             if (done) break;
             size += value.byteLength;
-            if (size > 512000) { await reader.cancel(); return response({ status: 413, body: { error: 'Conversation exceeds 512 KB. Use /new.', code: 'body_too_large' } }); }
+            if (size > 4_000_000) { await reader.cancel(); return response({ status: 413, body: { error: 'Conversation exceeds the 4 MB transport limit. History is preserved; use /new.', code: 'body_too_large' } }); }
             chunks.push(value);
           }
         } finally { reader.releaseLock(); }
@@ -143,3 +159,48 @@ export default {
     }
   },
 };
+
+async function authorized(request: Request, secret: string | undefined) {
+  if (!secret || secret.length < 32) return false;
+  const value = request.headers.get('Authorization') || '';
+  if (value.length > 1024) return false;
+  const [a, b] = await Promise.all([value, 'Bearer ' + secret].map(s => crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))));
+  const x = new Uint8Array(a), y = new Uint8Array(b);
+  return x.reduce((diff, byte, i) => diff | (byte ^ y[i]), 0) === 0;
+}
+
+async function internal(request: Request, env: Env) {
+  const path = new URL(request.url).pathname;
+  const publish = path === '/internal/rankings' && request.method === 'POST';
+  const evaluation = (path === '/internal/bench/catalog' && request.method === 'GET') || (path === '/internal/bench/chat' && request.method === 'POST');
+  if ((!publish && !evaluation) || !await authorized(request, publish ? env.RANKING_PUBLISH_TOKEN : env.BENCHMARK_TOKEN))
+    return response({ status: 404, body: { error: 'Not found.' } });
+  const gate = env.BUDGET.get(env.BUDGET.idFromName('global-v1'));
+  if (publish) {
+    const raw = await boundedBody(request, 128000);
+    if (!raw) return response({ status: 413, body: { error: 'Manifest too large.' } });
+    return gate.fetch('https://budget/rankings/publish', { method: 'POST', body: raw });
+  }
+  if (env.SERVICE_PAUSED === 'true') return response(refusal('service_paused', 'Service is paused.', 3600, 503));
+  // Benchmarks share the hosting allowance and provider meters. This identity
+  // cannot be supplied by a public user and carries no user information.
+  const check = await gate.fetch('https://budget/admit', { method: 'POST', body: JSON.stringify({ client: 'b'.repeat(64), kind: 'chat' }) });
+  if (!check.ok) return check;
+  if (path.endsWith('/chat')) {
+    const permit = await gate.fetch('https://budget/capacity/benchmark', { method: 'POST', body: '{}' });
+    if (!permit.ok) return permit;
+  }
+  const raw = request.method === 'POST' ? await boundedBody(request, 4_000_000) : undefined;
+  if (raw === null) return response({ status: 413, body: { error: 'Conversation too large.' } });
+  return (env.EVALUATOR || env.API).fetch(new Request('https://api.internal' + path, { method: request.method,
+    headers: { 'Content-Type': 'application/json', 'X-Bailout-Evaluation': 'authorized' }, body: raw }));
+}
+
+async function boundedBody(request: Request, maximum: number): Promise<Blob | null> {
+  if (Number(request.headers.get('Content-Length')) > maximum) return null;
+  const chunks: Uint8Array[] = []; let length = 0;
+  if (request.body) for await (const chunk of request.body) {
+    length += chunk.byteLength; if (length > maximum) return null; chunks.push(chunk);
+  }
+  return new Blob(chunks);
+}

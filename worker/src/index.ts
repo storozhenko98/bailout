@@ -1,6 +1,7 @@
+import type { Env } from "./types.js";
 /** Static landing page plus compatibility routes for older bailout clients. */
 export default {
-  async fetch(request, env) {
+  async fetch(request: Request, env: Env) {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/v1/') || url.pathname === '/health') {
       url.hostname = 'api.bailout.dev';

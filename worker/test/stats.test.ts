@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { PublicStats, releaseDownloads, publicStatsResponse, DOWNLOAD_REFRESH_MS, DOWNLOAD_RETRY_MS } from '../src/stats.js';
-import { formatCount, statView } from '../../site/stats.js';
+import { PublicStats, releaseDownloads, publicStatsResponse, DOWNLOAD_REFRESH_MS, DOWNLOAD_RETRY_MS } from '../src/stats.ts';
+import { formatCount, statView } from '../../web/stats.ts';
 
 function storage() {
   const db = new DatabaseSync(':memory:');

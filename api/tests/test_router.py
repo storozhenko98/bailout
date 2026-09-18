@@ -89,7 +89,7 @@ async def test_normal_conversation_never_requires_bash_and_checks_every_request(
     route = Router(stub, 'test-key')
     for _ in range(2):
         assert (await route.chat(data()))['message']['content'] == 'Hello!'
-    assert len([u for u, _ in stub.calls if u.endswith('/models')]) == 2
+    assert len([u for u, _ in stub.calls if u.endswith('/models')]) == 4
     assert len([u for u, _ in stub.calls if u.endswith('/endpoints')]) == 2
     for body in stub.inferences():
         assert 'tool_choice' not in body
@@ -192,7 +192,7 @@ async def test_fastapi_routes_limits_and_errors(monkeypatch):
             assert result.json()['message']['content'] == 'Hello!'
             assert (await client.post('/v1/chat', content='{')).status_code == 400
             before = len(stub.calls)
-            assert (await client.post('/v1/chat', json=dict(messages=[dict(role='user', content='x'*513000)]))).status_code == 413
+            assert (await client.post('/v1/chat', json=dict(messages=[dict(role='user', content='x'*4_000_001)]))).status_code == 413
             assert len(stub.calls) == before
             stub.status = 401
             stub.answer = dict(error='test-secret-not-real')

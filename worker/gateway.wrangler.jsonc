@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "bailout-gateway",
-  "main": "src/gateway.js",
+  "main": "src/gateway.ts",
   "compatibility_date": "2026-09-17",
   "workers_dev": false,
   "preview_urls": false,
@@ -14,6 +14,6 @@
   ],
   "durable_objects": { "bindings": [{ "name": "BUDGET", "class_name": "BudgetGuard" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BudgetGuard"] }],
-  "services": [{ "binding": "API", "service": "api" }],
+  "services": [{ "binding": "API", "service": "api" }, { "binding": "EVALUATOR", "service": "bailout-evaluator" }],
   "routes": [{ "pattern": "api.bailout.dev", "custom_domain": true }]
 }

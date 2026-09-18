@@ -1,0 +1,59 @@
+name: qualify free models
+on:
+  schedule:
+    - cron: '17 9 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: model-qualification
+  cancel-in-progress: false
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build isolated harness
+        run: docker build -t bailout-evaluation:local -f bench/Dockerfile .
+      - name: Verify benchmark fixtures and isolation
+        run: BAILOUT_TEST_DOCKER=1 python3 bench/test_bench.py
+      - name: Evaluate synthetic setup and repair tasks
+        env:
+          BAILOUT_BENCHMARK_TOKEN: ${{ secrets.BAILOUT_BENCHMARK_TOKEN }}
+        run: python3 bench/run.py --skip-build --max-models 2 --max-requests 80
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model-qualification
+          path: artifacts/rankings.json
+          retention-days: 7
+          if-no-files-found: error
+  publish:
+    needs: evaluate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: model-qualification
+      - name: Publish validated ranking atomically
+        env:
+          BAILOUT_RANKING_PUBLISH_TOKEN: ${{ secrets.BAILOUT_RANKING_PUBLISH_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, urllib.request
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+          token = os.environ['BAILOUT_RANKING_PUBLISH_TOKEN']
+          if len(token) < 32:
+              raise SystemExit('Ranking publication secret is not configured')
+          request = urllib.request.Request('https://api.bailout.dev/internal/rankings',
+              data=pathlib.Path('rankings.json').read_bytes(),
+              headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json',
+                       'User-Agent': 'bailout-qualification/1.0 (+https://bailout.dev)'})
+          with urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
+              print('Ranking published:', response.status)
+          PY

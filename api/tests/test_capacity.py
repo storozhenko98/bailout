@@ -1,3 +1,4 @@
+from conftest import free_accounts
 import asyncio
 import json
 from email.utils import format_datetime
@@ -82,7 +83,7 @@ async def test_429_retries_same_model_then_changes_model_with_every_attempt_mete
     assert len(meter.calls) == 3
     assert len(waits) == 1 and 2 <= waits[0] <= 2.5
     assert meter.cooldowns == [('openrouter', 'test/a:free', 2), ('openrouter', 'test/a:free', 300)]
-    assert len([u for u, _ in stub.calls if u.endswith('/models')]) == 3
+    assert len([u for u, _ in stub.calls if u.endswith('/models')]) == 4
 
 
 async def test_pinned_429_can_retry_but_never_changes_model():
@@ -152,7 +153,7 @@ async def test_account_exhaustion_uses_independent_pool_and_settles_tokens():
     stub, meter = Multiple([error(429, limit_source='openrouter_daily')]), Meter()
     request = data(stream=True)
     request['messages'] += [dict(role='assistant', tool_calls=[tool()], reasoning_details=[dict(data='opaque')]), dict(role='tool', tool_call_id='call_a', content='already installed')]
-    events = await stream(Router(stub, 'test', capacity=meter, groq_key='groq-test', groq_free=True, sleep=no_wait), request)
+    events = await stream(Router(stub, 'test', capacity=meter, provider_keys={'groq':'groq-test'}, accounts=free_accounts(), sleep=no_wait), request)
     assert events[-1]['model'] == GROQ_MODEL and events[-1]['type'] == 'done'
     assert len(stub.inferences()) == 1
     assert [c[0] for c in meter.calls] == ['openrouter', 'groq']
@@ -166,7 +167,7 @@ async def test_account_exhaustion_uses_independent_pool_and_settles_tokens():
 
 async def test_groq_is_disabled_without_explicit_free_account_configuration():
     stub = Multiple([stream_answer()])
-    events = await stream(Router(stub, 'test', groq_key='groq-test'), data(stream=True))
+    events = await stream(Router(stub, 'test', provider_keys={'groq':'groq-test'}), data(stream=True))
     assert events[-1]['type'] == 'done' and not stub.groq_calls
 
 
@@ -184,7 +185,7 @@ async def test_secondary_catalog_failure_during_recovery_keeps_other_routes_avai
         return await original(url, **kwargs)
 
     stub.request = request
-    events = await stream(Router(stub, 'test', groq_key='groq-test', groq_free=True), data(stream=True))
+    events = await stream(Router(stub, 'test', provider_keys={'groq':'groq-test'}, accounts=free_accounts()), data(stream=True))
     assert events[-1]['type'] == 'done' and events[-1]['model'] == 'test/b:free'
     assert catalogs == 2
     assert not any(url.endswith('/chat/completions') for url, _ in stub.groq_calls)
@@ -193,7 +194,7 @@ async def test_secondary_catalog_failure_during_recovery_keeps_other_routes_avai
 async def test_local_quota_uses_other_provider_without_sending_rejected_attempt():
     meter = Meter(dict(openrouter=dict(ok=False, code='provider_capacity', retry_after_seconds=60)))
     stub = Multiple([])
-    events = await stream(Router(stub, 'test', capacity=meter, groq_key='groq-test', groq_free=True, sleep=no_wait), data(stream=True))
+    events = await stream(Router(stub, 'test', capacity=meter, provider_keys={'groq':'groq-test'}, accounts=free_accounts(), sleep=no_wait), data(stream=True))
     assert events[-1]['model'] == GROQ_MODEL and not stub.inferences()
 
 

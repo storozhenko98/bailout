@@ -4,12 +4,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/*.test.js",
+    "test": "npm run typecheck && tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.web.json",
+    "build:site": "tsx build-site.ts",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20260918.1",
+    "@types/node": "26.6.1",
+    "esbuild": "0.28.2",
     "miniflare": "5.20260917.0-alpha",
+    "tsx": "4.23.13",
+    "typescript": "7.0.2",
     "wrangler": "4.134.0"
   }
 }

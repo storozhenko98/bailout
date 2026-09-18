@@ -1,10 +1,11 @@
+import { buildSync } from 'esbuild';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { CapacityLedger } from '../src/capacity.js';
-import { BudgetLedger, POLICY } from '../src/budget.js';
-import gateway, { clientNetwork } from '../src/gateway.js';
+import { CapacityLedger } from '../src/capacity.ts';
+import { BudgetLedger, POLICY } from '../src/budget.ts';
+import gateway, { clientNetwork } from '../src/gateway.ts';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { fileURLToPath } from 'node:url';
 
@@ -66,7 +67,7 @@ test('IPv6 addresses in a /64 and mapped IPv4 cannot evade identity grouping', (
 });
 
 function runtime(allowance, api) {
-  return new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'gateway', modules: ['gateway.js', 'budget.js', 'stats.js', 'capacity.js'].map(name => ({type:'ESModule', path:fileURLToPath(new URL('../src/' + name, import.meta.url))})), compatibilityDate: '2026-09-17',
+  return new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'gateway', modules: [{type:'ESModule', path:'gateway.js', contents:buildSync({entryPoints:[fileURLToPath(new URL('../src/gateway.ts', import.meta.url))],bundle:true,write:false,format:'esm',platform:'browser'}).outputFiles[0].text}], compatibilityDate: '2026-09-17',
     bindings: { BUDGET_ALLOWANCE_MICRO_USD: String(allowance), SERVICE_PAUSED: 'false' },
     durableObjects: { BUDGET: { className: 'BudgetGuard', useSQLite: true } },
     ratelimits: { EDGE_IP_LIMIT: { namespace_id: '1005', simple: { limit: 60, period: 60 } }, EDGE_GLOBAL_LIMIT: { namespace_id: '1006', simple: { limit: 240, period: 60 } } },
@@ -115,7 +116,7 @@ test('unknown routes, malformed identity, oversized chunked bodies, pause, and l
   try {
     assert.equal((await mf.dispatchFetch('https://api.test/evil')).status, 404);
     assert.equal((await mf.dispatchFetch('https://api.test/v1/chat')).status, 405);
-    const huge = new ReadableStream({ start(c) { c.enqueue(new Uint8Array(512001)); c.close(); } });
+    const huge = new ReadableStream({ start(c) { c.enqueue(new Uint8Array(4_000_001)); c.close(); } });
     assert.equal((await mf.dispatchFetch('https://api.test/v1/chat', { ...opts, body: huge, duplex: 'half' })).status, 413);
   } finally { await mf.dispose(); }
   assert.equal(upstream, 0);

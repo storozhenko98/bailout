@@ -47,7 +47,7 @@ class Transport:
             from pyodide.ffi import to_js
             controller = AbortController.new()
             signal = AbortSignal.any(to_js([controller.signal, AbortSignal.timeout(max(1, int(timeout * 1000)))]))
-            response = await fetch(url, method=method, headers=headers or {}, body=body, signal=signal, cache="no-store")
+            response = await fetch(url, method=method, headers=headers or {}, body=body, signal=signal, cache="no-store", redirect="manual")
             return EdgeResponse(response, controller)
         import httpx
         client = httpx.AsyncClient(timeout=timeout)

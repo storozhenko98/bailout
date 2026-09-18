@@ -157,7 +157,7 @@ pub fn read(editor: &mut DefaultEditor, selecting: bool) -> super::Result<Input>
                 return Ok(Input::Text(String::from_utf8_lossy(&bytes).into_owned()));
             }
             bytes.push(c);
-            if bytes.len() > super::CONTEXT_LIMIT {
+            if bytes.len() > super::INPUT_LIMIT {
                 return Err("Input is too long.".into());
             }
         }

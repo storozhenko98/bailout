@@ -1,3 +1,4 @@
+import type { Storage, HttpResult } from "./types.js";
 // Dollar reservations, not a claim to read Cloudflare's real-time invoice.
 export const POLICY = Object.freeze({
   allowanceMicroUsd: 35_000_000,
@@ -11,11 +12,11 @@ export const POLICY = Object.freeze({
   chatMinute: 60, // Admissions only; each upstream attempt has its own shared gate.
 });
 export const DOCS = 'https://bailout.dev/docs/#service-limits';
-export function refusal(code, error, seconds = 60, status = 429, now = Date.now()) {
+export function refusal(code: string, error: string, seconds = 60, status = 429, now = Date.now()) {
   return { status, body: { error, code, retry_after_seconds: Math.max(1, Math.ceil(seconds)),
     resets_at: new Date(now + Math.max(1, Math.ceil(seconds)) * 1000).toISOString(), docs: DOCS } };
 }
-export function budgetRefusal(reset, now = Date.now()) {
+export function budgetRefusal(reset: number, now = Date.now()) {
   const when = new Date(reset).toISOString();
   return refusal('budget_exhausted', `Bailout's shared hosting allowance is exhausted. New model requests are paused to control costs. Capacity begins returning at ${when}. You have not been charged. See ${DOCS}`, (reset - now) / 1000, 503, now);
 }
@@ -23,7 +24,8 @@ export function budgetRefusal(reset, now = Date.now()) {
 // One globally named SQLite Durable Object; synchronous transactions reserve
 // capacity before a caller can forward anything to the private Python service.
 export class BudgetLedger {
-  constructor(storage, allowance = POLICY.allowanceMicroUsd, chatLimit = POLICY.chatMinute) {
+  chatLimit: number; storage: Storage; sql: SqlStorage; allowance: number;
+  constructor(storage: Storage, allowance: number = POLICY.allowanceMicroUsd, chatLimit: number = POLICY.chatMinute) {
     if (!Number.isSafeInteger(allowance) || allowance < 0 || allowance > POLICY.allowanceMicroUsd) throw new Error('Invalid budget configuration');
     if (!Number.isSafeInteger(chatLimit) || chatLimit < 1 || chatLimit > POLICY.chatMinute) throw new Error('Invalid admission configuration');
     this.chatLimit = chatLimit;
@@ -35,19 +37,19 @@ export class BudgetLedger {
     this.sql.exec('CREATE INDEX IF NOT EXISTS client_expiry ON clients(expires)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS global_state (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
   }
-  admit(client, kind, now = Date.now()) {
+  admit(client: string, kind: string, now = Date.now()): HttpResult {
     if (!/^[a-f0-9]{64}$/.test(client) || !['chat', 'read', 'status'].includes(kind)) throw new Error('Invalid internal admission request');
     return this.storage.transactionSync(() => {
       const hour = Math.floor(now / 3_600_000), day = Math.floor(hour / 24), minute = Math.floor(now / 60_000);
       this.sql.exec('DELETE FROM budget WHERE hour < ?', hour - POLICY.windowHours);
-      const totals = this.sql.exec('SELECT COALESCE(SUM(reserved), 0) AS reserved, MIN(hour) AS first FROM budget').one();
+      const totals = this.sql.exec<{ reserved: number; first: number | null }>('SELECT COALESCE(SUM(reserved), 0) AS reserved, MIN(hour) AS first FROM budget').one();
       const reset = ((totals.first ?? hour) + POLICY.windowHours + 1) * 3_600_000;
       const cost = POLICY.attemptMicroUsd + (kind === 'status' ? 0 : POLICY.forwardMicroUsd);
       if (totals.reserved + cost > this.allowance) return budgetRefusal(reset, now);
       // Account for gate traffic, including requests rejected by fair-use rules.
       this.sql.exec('INSERT INTO budget VALUES (?, ?) ON CONFLICT(hour) DO UPDATE SET reserved = reserved + excluded.reserved', hour, POLICY.attemptMicroUsd);
-      const global = [...this.sql.exec('SELECT value FROM global_state WHERE id = 1')][0];
-      const g = global ? JSON.parse(global.value) : {};
+      const global = [...this.sql.exec<{ value: string }>('SELECT value FROM global_state WHERE id = 1')][0];
+      const g: Record<string, number> = global ? JSON.parse(global.value) : {};
       if (g.minute !== minute) { g.minute = minute; g.requests = 0; g.chats = 0; }
       if (g.cleanupHour !== hour) {
         this.sql.exec('DELETE FROM clients WHERE expires <= ?', now);
@@ -56,12 +58,12 @@ export class BudgetLedger {
       if (g.requests >= POLICY.globalMinute || (kind === 'chat' && g.chats >= this.chatLimit)) {
         return refusal('capacity_busy', 'Shared free capacity is busy. Try again after the indicated delay.', (minute + 1) * 60 - now / 1000, 429, now);
       }
-      const row = [...this.sql.exec('SELECT value FROM clients WHERE id = ?', client)][0];
-      const c = row ? JSON.parse(row.value) : {};
-      for (const [window, stamp] of [['minute', minute], ['hour', hour], ['day', day]]) {
+      const row = [...this.sql.exec<{ value: string }>('SELECT value FROM clients WHERE id = ?', client)][0];
+      const c: Record<string, number> = row ? JSON.parse(row.value) : {};
+      for (const [window, stamp] of [['minute', minute], ['hour', hour], ['day', day]] as const) {
         if (c[window] !== stamp) { c[window] = stamp; c[window + 'Count'] = 0; }
       }
-      for (const [window, limit, duration] of [['minute', POLICY.clientMinute, 60], ['hour', POLICY.clientHour, 3600], ['day', POLICY.clientDay, 86400]]) {
+      for (const [window, limit, duration] of [['minute', POLICY.clientMinute, 60], ['hour', POLICY.clientHour, 3600], ['day', POLICY.clientDay, 86400]] as const) {
         if (c[window + 'Count'] >= limit) return refusal('client_rate_limited', `This IP address has reached Bailout's ${window === 'day' ? 'daily' : window === 'hour' ? 'hourly' : 'per-minute'} fair-use limit. Wait before retrying.`, (c[window] + 1) * duration - now / 1000, 429, now);
       }
       g.requests++; if (kind === 'chat') g.chats++;

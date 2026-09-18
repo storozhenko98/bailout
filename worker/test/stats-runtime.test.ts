@@ -1,9 +1,10 @@
+import { transformSync } from 'esbuild';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 
-const source = await readFile(new URL('../src/stats.js', import.meta.url), 'utf8');
+const source = transformSync(await readFile(new URL('../src/stats.ts', import.meta.url), 'utf8'), {loader:'ts',format:'esm'}).code;
 const probe = `
   import { PublicStats } from './stats.js';
   export class StatsProbe {

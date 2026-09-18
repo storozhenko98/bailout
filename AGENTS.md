@@ -15,8 +15,10 @@ it into a permanent workspace, account system, or replacement for the user's age
   another agent, or a local API key to get started.
 - Free inference only. OpenRouter routes require fresh zero model/endpoint prices
   before every inference, including retries; unknown pricing fails closed and
-  zero-price caps remain mandatory. Direct providers require a verified Free
-  account with billing disabled. Never enable paid fallback or automatic top-up.
+  zero-price caps remain mandatory. Groq and Mistral require a verified Free
+  account with billing disabled. Z.AI requires freshly verified explicit free
+  pricing; Vercel requires zero pricing and its enforced free-capability filter.
+  Only benchmark-qualified models may serve production requests. Never enable paid fallback or automatic top-up.
   Reserve shared provider request/token quotas before every upstream attempt.
 - Keep sign-in and credential entry in interactive terminal handoffs, outside the
   model conversation. Do not capture their terminal input or output.

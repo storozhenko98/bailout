@@ -1,0 +1,4 @@
+#!/bin/sh
+# The evaluation container has no network. Only the credential-free Unix
+# inference proxy is reachable; the controller authenticates outside the box.
+exec /usr/bin/curl --unix-socket /run/bailout/api.sock "$@"

@@ -1,6 +1,6 @@
 # Automatic model recovery
 
-Bailout v0.6 uses Auto routing: no model picker or local provider setup. The hosted
+Bailout uses Auto routing: no model picker or local provider setup. The hosted
 backend chooses a working free route; the terminal reports recovery and the model
 that answered. Older API clients may still pin an explicit free model. A pinned
 request can retry that model, but never silently changes it.
@@ -26,7 +26,8 @@ Auto gives each inference at most 40 seconds. A legacy pinned attempt gets at mo
 - Unknown pricing disables the affected route. Every OpenRouter inference,
   including same-model retries, gets current model and endpoint checks and hard
   zero-price routing caps. Direct providers require an explicitly verified Free
-  account with billing disabled; a model's name is not proof of free billing.
+  account with billing disabled where free eligibility comes from the account tier;
+  zero-priced Z.AI and Vercel routes have their own live pricing checks.
 
 A shared SQLite Durable Object reserves **every upstream attempt**, including
 retries. It applies rolling request/token quotas, at most eight concurrent calls
@@ -48,6 +49,23 @@ the unfinished model response; it never replays completed commands. Discard part
 tool calls. Strip provider-specific reasoning metadata when changing models while
 preserving conversation text and completed tool results. Ordinary Bash errors go
 back to the model to diagnose. Ctrl-C cancels recovery and local commands.
+
+## Context and qualification
+
+Every production route must pass the [Bailout benchmark](model-qualification.md).
+Quality evidence and live availability are separate. A 32,768-token model window
+is the minimum; a large window does not establish intelligence. Each attempt must
+fit the complete input, reserved output, and 10%/2,048-token headroom. Estimates
+currently conservatively count UTF-8 bytes plus tool schemas and framing, so a
+switch can happen before an exact tokenizer would require one.
+
+The CLI no longer silently drops old turns at 100,000 bytes. A `model` event with
+`reason: "context_limit"`, `retry: true`, and a readable `notice` announces a switch
+before the larger route is called. No confirmation is requested. `done.context`
+reports the selected window, input upper estimate, reserved output, and margin.
+Non-streaming responses include `notices` too. If no qualified free route fits,
+`context_exhausted` preserves history and asks the user to start a new task. The
+separate transport ceiling is 4 MB and 2,048 messages.
 
 ## Client protocol
 

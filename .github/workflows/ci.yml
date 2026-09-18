@@ -22,6 +22,9 @@ jobs:
           node-version: '22'
       - run: npm ci && npm test
         working-directory: worker
+      - run: npm run build:site
+        working-directory: worker
+      - run: python3 bench/test_bench.py
       - run: cargo build --release --locked && python3 scripts/check-size.py target/release/bailout
       - run: python3 scripts/smoke.py target/release/bailout
       - run: python3 scripts/test-updater.py target/release/bailout

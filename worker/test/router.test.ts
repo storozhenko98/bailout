@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import worker from '../src/index.js';
+import worker from '../src/index.ts';
 
 test('old API URLs preserve requests through the FastAPI service binding', async () => {
   const env = { API: { async fetch(request) {

@@ -110,7 +110,7 @@ Bailout's Bash calls skip shell startup files, and its curl transport ignores
 
 ## Free means zero
 
-The hosted FastAPI service on Cloudflare Python Workers owns the OpenRouter key. The client never receives it.
+The hosted FastAPI service on Cloudflare Python Workers owns provider keys. The client never receives them. The OpenRouter adapter applies these checks:
 For **every model request**, including subsequent agent steps and fallback attempts:
 
 1. Fetch a fresh OpenRouter catalog with cache bypass; require an explicit `:free`
@@ -132,13 +132,14 @@ The $1 key limit alone would still permit paid requests. The checks and upstream
 zero-price cap are what enforce this app's free-only policy. Like any client, the
 app depends on OpenRouter honoring its published prices and routing contract.
 
-Model ordering is a **metadata heuristic, not measured benchmark scores**. It favors
-coding specialists, reasoning support, coding evaluation mentions, and useful context
-lengths; small variants and models described as unsuitable for coding are deprioritized.
-Only models with healthy verified-free endpoints are eligible for automatic selection.
-The list includes the score and reasons so the preference is inspectable and replaceable.
-“Available” means the public provider metadata passes these checks; it does not
-guarantee the shared account can complete a request.
+The new router qualifies models using Bailout's own setup-and-repair benchmark.
+Models need repeated passing runs, native Bash calls, and no critical failures.
+Unrecognized models remain outside production. Rankings combine measured task
+success with aggregate route health; context length, model names and marketing
+copy do not earn intelligence points. The nightly workflow publishes versioned
+results atomically, retaining the last valid snapshot on failure.
+See [qualification, context handling and staged rollout](docs/model-qualification.md).
+This checkout's new routing policy needs genuine qualification results before activation.
 
 Auto remembers the working model for the terminal session and avoids failed routes.
 The backend shares cooldowns across users and reserves request/token capacity for
@@ -148,12 +149,19 @@ can use a separately enabled free provider; policy refusals and the hosting cuto
 stop recovery. No prompt logs or installation IDs are introduced.
 See [recovery and the API protocol](docs/model-recovery.md).
 
-An optional Groq adapter supports a separately verified **Free organization with
-billing disabled**. Its key stays on the server, and the route is disabled unless
-the operator explicitly enables it. This is free account-tier access, not a claim
-that Groq's models have zero list prices. The current enabled provider pools and
-configured quotas are listed in [/v1/status](https://api.bailout.dev/v1/status).
-See [operator setup](docs/service-limits.md#direct-free-provider-setup).
+Adapters cover OpenRouter, Groq, Mistral, Z.AI and Vercel AI Gateway.
+Groq and Mistral require expiring attestations of verified Free accounts with paid
+billing and top-ups disabled. Z.AI requires fresh, explicit Free pricing in all
+four published token-price columns. Vercel requires zero input/output/other fees,
+native tools, a free capability, and `providerOptions.gateway.has: ["free"]` on
+every inference. Credit balances and spending limits never make a paid model eligible.
+Unknown or changed eligibility skips that route. See [operator setup](docs/service-limits.md#direct-free-provider-setup).
+
+The client preserves history instead of silently removing old turns. Every route
+must support at least 32K context and fit this conversation plus answer space and
+headroom. Near a limit, Auto announces a switch to a fitting qualified free model.
+If none fits, it returns `context_exhausted`; `/new` starts a fresh task. The first
+implementation uses a conservative byte-based token estimate and can switch early.
 
 Free capacity is **shared and best effort**. OpenRouter's account quota and provider
 availability still apply. A final HTTP 429 means wait for the indicated capacity reset;
@@ -170,9 +178,9 @@ Source contracts: [OpenRouter provider routing](https://openrouter.ai/docs/guide
 
 Prompts, model-selected file contents, and captured Bash output are sent through the hosted
 Worker to the selected configured provider (OpenRouter and its upstream provider,
-or Groq when explicitly enabled). Provider data policies apply;
+or an enabled Groq, Mistral, Z.AI or Vercel route). Provider data policies apply;
 free does not mean zero data retention. The Worker does not store conversations or
-log request bodies. The gateway retains short-lived daily IP hashes, quota reservations and cooldowns; see [retention details](docs/service-limits.md). Worker observability is disabled. Do not include credentials in
+log request bodies. The gateway retains short-lived daily IP hashes, quota reservations, cooldowns, and aggregate model availability/latency; see [retention details](docs/service-limits.md). Worker observability is disabled. Do not include credentials in
 prompts or ask the agent to read secret files.
 
 The homepage publishes aggregate download and model-request totals. Downloads
@@ -202,7 +210,8 @@ python3 scripts/check-size.py target/release/bailout
 python3 scripts/smoke.py target/release/bailout
 python3 scripts/test-installer.py
 (cd api && uv sync && uv run pytest)
-(cd worker && npm ci && npm test)
+(cd worker && npm ci && npm test && npm run build:site)
+python3 bench/test_bench.py
 ```
 
 Optional live file-write verification (uses shared free quota):
@@ -242,6 +251,10 @@ their own updates. Older releases need the installer once to gain this feature.
 - [FastAPI reference](https://api.bailout.dev/docs)
 - [Live model list](https://api.bailout.dev/v1/models)
 
+Worker and browser sources use strict TypeScript. `npm run build:site` in `worker`
+emits plain JavaScript and copies static assets to `dist/site`; Wrangler runs that
+build automatically for the website. The Rust binary and Python API need no JS runtime.
+
 The site uses self-hosted Space Grotesk and IBM Plex Mono, with their OFL licenses
 included. No analytics, external fonts, or frontend framework. The visual language
 is inspired by [neobrutalism.dev](https://www.neobrutalism.dev/).
@@ -256,7 +269,7 @@ Bind the Python Worker’s `CAPACITY` namespace to `BudgetGuard` in that gateway
 For a new deployment, first deploy the gateway with an empty `services` array and
 `SERVICE_PAUSED=true` so its Durable Object exists. Then deploy Python with the
 `CAPACITY` binding, restore the gateway’s `API` service binding, and unpause it.
-For an existing deployment, follow [the upgrade order and operating instructions](docs/service-limits.md).
+For an existing deployment, use the [staged qualification rollout](docs/model-qualification.md#operator-setup-and-rollout) before switching the public backend. An empty registry fails closed.
 
 The Python API needs **Workers Paid** on Cloudflare. Its JSON processing and
 streaming exceed the Free plan's 10 ms CPU allowance; requests can otherwise be
@@ -276,15 +289,14 @@ uv run pywrangler secret put OPENROUTER_API_KEY
 
 Enter the OpenRouter key at the secret prompt. Never put it in source or config.
 For edge development, place it in a gitignored `.dev.vars` file and run
-`uv run pywrangler dev`. For ordinary local FastAPI development, set the key in
-your environment and run `uv run uvicorn app:app --app-dir src --reload`.
+`uv run pywrangler dev`. For ordinary local FastAPI protocol development, run `uv run uvicorn app:app --app-dir src --reload`. Production qualification and quotas require the Durable Object binding; local mode has no qualified models by default.
 The API exposes `/health`, `/v1/models`, `/v1/chat`, `/docs`, and `/openapi.json`.
 Chat accepts `{model, messages, stream}` and optional Auto-only `preferred_model`
 and `avoid_models` session hints. With `stream: true`, it returns NDJSON
 `model`, `text`, and `done` events, or an `error` event. Only the `done` event
 contains a validated message that is safe to pass to the tool dispatcher.
-An additive `retry: true` field on a `model` event marks a discarded attempt;
-clients should separate its partial text from the new response. The complete
+An additive `retry: true` field on a `model` event marks recovery or a preemptive switch;
+clients should display its `notice` and separate any partial text from the new response. The complete
 conversation message comes only from `done`, never concatenated text deltas.
 
 Deploy the guard with `npm ci && npx wrangler deploy --config gateway.wrangler.jsonc`

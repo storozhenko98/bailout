@@ -43,7 +43,7 @@ the ledger, and continued requests after shutdown can still incur charges.
 Before forwarding a request, the gate reserves $0.000300 for backend work, plus
 $0.000010 for checking capacity. The Python Worker is limited to 5,000 CPU ms per
 request; at $0.02/million CPU ms that costs at most approximately $0.000100,
-before the extra allowance for gateway and storage work. The 50 ms JavaScript
+before the extra allowance for gateway and storage work. The 50 ms gateway
 Worker limits, body-size limit, and route allowlist bound individual requests.
 No credit is taken for the plan's included usage. Failed or cancelled requests
 are not refunded. The counter deliberately overestimates ordinary work; it is
@@ -94,6 +94,7 @@ is the earliest capacity return, not a promise that an entire session will fit.
 | 429/503 | `upstream_quota` | Account allowance exhausted; stop. Never enable paid routing. |
 | 503 | `upstream_policy` | Access or content policy blocked the request; stop without switching models. |
 | 503/504 | `recovery_exhausted` | Four attempts or 120 seconds exhausted; display the error and wait. |
+| 400 | `context_exhausted` | No qualified free route fits; history remains intact. Start a fresh task with `/new`. |
 | 503 | `pricing_unavailable` / `no_free_models` | No safely eligible free route; stop. |
 | 502 | `unexpected_cost` | Cost audit failed; stop and investigate the provider. |
 
@@ -148,13 +149,59 @@ burst-limit key; cache misses and counter writes still incur hosting work.
 
 ## Direct free-provider setup
 
-Groq is optional and disabled by default. Use a Free organization with no paid
-upgrade or automatic billing. Verify the account's actual limits before enabling
-it. Put its key in the Python Worker's encrypted `GROQ_API_KEY` secret, then set
-`GROQ_FREE_ONLY=true` in that Worker's variables. Add `groq` to the gateway's
-comma-separated `PROVIDER_POOL` variable so status reflects the enabled pool.
-Do not set the flag for a paid organization: Groq model metadata does not expose
-account billing status, so the operator's account configuration is the prerequisite
-for zero-cost eligibility. Revoke or disable this route before changing the account
-to a paid plan. No Gemini, paid fallback or trial-credit route is enabled by this
-adapter. Provider keys stay on the backend.
+Provider keys stay in the private Python Worker's encrypted secrets:
+`OPENROUTER_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `ZAI_API_KEY`, and
+`VERCEL_AI_GATEWAY_API_KEY`. Missing keys disable their providers. Model discovery
+alone never qualifies a model for serving users.
+
+Groq and Mistral additionally require `FREE_ACCOUNTS`, a JSON configuration on the
+Python Worker. Verify the account has no paid billing or automatic top-ups before
+attesting it. The former `GROQ_FREE_ONLY` boolean is no longer sufficient. Example
+shape (replace the timestamps with your actual verification and expiry):
+
+```json
+{
+  "groq": {
+    "tier": "free",
+    "billing_disabled": true,
+    "topups_disabled": true,
+    "verified_at": "2026-09-17T00:00:00Z",
+    "expires_at": "2026-09-24T00:00:00Z"
+  }
+}
+```
+
+Attestations expire after at most 31 days. Missing, expired, malformed or paid
+account configuration disables the provider. This is operator verification, not
+an assertion that the providers offer an API to detect account upgrades. Disable
+the route before changing account billing. Use an isolated free account for Bailout.
+Add a similarly verified `mistral` record to enable its free account tier.
+
+When the account dashboard confirms model-specific quotas, add `limits_by_model`
+inside that account record, keyed by the provider's exact model ID. Each entry has
+positive integer `rpm`, `rpd`, `tpm` and `tpd`, conservatively below the verified
+limits. The shared Durable Object then meters each model independently; account
+cooldowns and the eight-call provider concurrency limit still apply. Without that
+verification, quotas stay in the conservative shared provider pool. Never add
+keys/accounts to evade an upstream account's limits.
+
+OpenRouter checks all live model and endpoint charges and enforces hard zero price
+caps on every attempt. Z.AI checks its official pricing table before each attempt
+and requires explicit Free input, cached input, cache storage, and output. Unknown
+rows or changed documentation fail closed; its native model API has no equivalent
+to OpenRouter's hard maximum-price field. Vercel checks its live catalog, rejects
+unknown/nonzero fees and non-tool models, and sets `has: ["free"]` on every gateway
+request. Vercel's free credits or a $5 spending limit do not qualify paid models.
+An unexpected reported cost stops the request and cools down that provider for 24 hours.
+
+Add configured provider names to the gateway's comma-separated `PROVIDER_POOL` so
+status lists their admission ceilings. In addition to the OpenRouter and Groq
+ceilings above, default operator ceilings are Mistral 1 RPM / 900 RPD / 48,000 TPM /
+450,000 TPD, and Z.AI/Vercel each 10 RPM / 900 RPD. These are conservative application
+limits, not claims about your provider entitlement. Verify actual account limits
+before activation. Upstream refusals always win; no limit authorizes paid usage.
+
+The [qualification and staged rollout guide](model-qualification.md) covers the
+nightly workflow, two distinct operator secrets, initial evidence, and switching
+the public backend only after models genuinely qualify. `/v1/status` also reports
+ranking freshness. All metadata/routing controls remain private to the operator.

@@ -22,7 +22,8 @@ const DEFAULT_API: &str = match option_env!("BAILOUT_DEFAULT_API") {
     None => "https://api.bailout.dev",
 };
 const OUTPUT_LIMIT: usize = 16_000;
-const CONTEXT_LIMIT: usize = 100_000;
+const INPUT_LIMIT: usize = 3_900_000;
+const REQUEST_LIMIT: usize = 4_000_000;
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 static LAST_OUTPUT: Mutex<String> = Mutex::new(String::new());
 type Observer<'a> = Option<&'a mut dyn FnMut(&[u8])>;
@@ -401,22 +402,16 @@ fn system() -> Value {
         Platform: {} {}.", cwd.display(), env::consts::OS, env::consts::ARCH)})
 }
 
-fn trim_history(messages: &mut Vec<Value>) -> Result<()> {
-    while messages.iter().map(|v| v.to_string().len()).sum::<usize>() > CONTEXT_LIMIT {
-        // Drop complete old turns only, preserving system and the entire current tool chain.
-        let next_user = messages
-            .iter()
-            .enumerate()
-            .skip(2)
-            .find(|(_, m)| m["role"] == "user")
-            .map(|(i, _)| i);
-        if let Some(index) = next_user {
-            messages.drain(1..index);
-        } else {
-            return Err(
-                "Session context is full. Use /new and continue with a smaller task.".into(),
-            );
-        }
+fn check_history(messages: &[Value]) -> Result<()> {
+    // The server checks each provider's token window. Never silently remove
+    // older turns to fit an unrelated client byte limit.
+    if messages.len() > 2048
+        || serde_json::to_vec(messages)
+            .map_err(|e| e.to_string())?
+            .len()
+            > INPUT_LIMIT
+    {
+        return Err("Conversation reached Bailout's transport limit. Your history is preserved. Use /new for a fresh task.".into());
     }
     Ok(())
 }
@@ -465,9 +460,14 @@ fn turn(
         if CANCELLED.load(Ordering::SeqCst) {
             return Err("Interrupted.".into());
         }
-        trim_history(messages)?;
+        check_history(messages)?;
         let mut body = json!({"model":model, "messages":messages, "stream":true});
         routing.hints(&mut body);
+        if body.to_string().len() > REQUEST_LIMIT {
+            return Err(
+                "Conversation reached Bailout's transport limit. Use /new for a fresh task.".into(),
+            );
+        }
         let response = stream_chat(base, body, routing)?;
         let actual = response["model"]
             .as_str()
@@ -647,7 +647,7 @@ fn run() -> Result<()> {
     if !io::stdin().is_terminal() {
         let mut input = String::new();
         io::stdin()
-            .take(CONTEXT_LIMIT as u64 + 1)
+            .take(INPUT_LIMIT as u64 + 1)
             .read_to_string(&mut input)
             .map_err(|e| e.to_string())?;
         if input.trim().is_empty() {
@@ -780,17 +780,29 @@ mod tests {
     }
 
     #[test]
-    fn trimming_preserves_current_tool_chain() {
-        let mut messages = vec![
+    fn history_over_old_limit_is_preserved_including_tool_chain() {
+        let messages = vec![
             system(),
-            json!({"role":"user","content":"x".repeat(CONTEXT_LIMIT)}),
+            json!({"role":"user","content":"x".repeat(150_000)}),
             json!({"role":"assistant","content":"old"}),
             json!({"role":"user","content":"new"}),
             json!({"role":"assistant","tool_calls":[{"id":"a"}]}),
             json!({"role":"tool","tool_call_id":"a","content":"ok"}),
         ];
-        trim_history(&mut messages).unwrap();
-        assert_eq!(messages.len(), 4);
-        assert_eq!(messages[1]["content"], "new");
+        check_history(&messages).unwrap();
+        assert_eq!(messages.len(), 6);
+        assert_eq!(messages[1]["content"].as_str().unwrap().len(), 150_000);
+    }
+
+    #[test]
+    fn transport_exhaustion_never_discards_history() {
+        let messages = vec![
+            system(),
+            json!({"role":"user", "content":"x".repeat(INPUT_LIMIT)}),
+        ];
+        assert!(check_history(&messages)
+            .unwrap_err()
+            .contains("history is preserved"));
+        assert_eq!(messages.len(), 2);
     }
 }
