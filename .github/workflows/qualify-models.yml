@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: '17 9 * * *'
   workflow_dispatch:
+    inputs:
+      models:
+        description: 'Optional: up to two exact candidate IDs, separated by spaces. Blank uses nightly rotation.'
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -23,7 +28,16 @@ jobs:
       - name: Evaluate synthetic setup and repair tasks
         env:
           BAILOUT_BENCHMARK_TOKEN: ${{ secrets.BAILOUT_BENCHMARK_TOKEN }}
-        run: python3 bench/run.py --skip-build --max-models 2 --max-requests 80
+          BAILOUT_EVAL_MODELS: ${{ inputs.models }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess
+          models = os.environ.get('BAILOUT_EVAL_MODELS', '').split()
+          if len(models) > 2 or any(not re.fullmatch(r'[\w.-]+/(?:[\w.-]+/)*[\w.-]+:free', m) for m in models):
+              raise SystemExit('Use at most two exact free candidate IDs')
+          args = ['python3', 'bench/run.py', '--skip-build', '--max-models', '2', '--max-requests', '80']
+          subprocess.run(args + (['--models', *models] if models else []), check=True)
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: model-qualification

@@ -68,7 +68,9 @@ until qualified.
 ## Nightly job and isolation
 
 `.github/workflows/qualify-models.yml` runs daily at 09:17 UTC and supports manual
-dispatch. It evaluates up to two models and 80 inference requests per run. The
+dispatch. Manual runs accept up to two exact candidate IDs for bootstrap or
+regression checks; blank input uses the same rotation as the scheduled job.
+It evaluates up to two models and 80 inference requests per run. The
 gateway independently caps evaluation at 300 requests per UTC day, shared across
 workflow reruns; production provider quotas and the hosting allowance still apply.
 Evaluation never switches models. The controller may retry the same conversation
