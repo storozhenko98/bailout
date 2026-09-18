@@ -2,13 +2,13 @@
 export const POLICY = Object.freeze({
   allowanceMicroUsd: 35_000_000,
   attemptMicroUsd: 10,
-  forwardMicroUsd: 110, // 5,000 ms Python CPU at $0.02/M ms, plus overhead.
+  forwardMicroUsd: 300, // Python CPU plus bounded provider reservations/retries.
   windowHours: 31 * 24,
   clientMinute: 30,
   clientHour: 300,
   clientDay: 1000,
   globalMinute: 120,
-  chatMinute: 18,
+  chatMinute: 60, // Admissions only; each upstream attempt has its own shared gate.
 });
 export const DOCS = 'https://bailout.dev/docs/#service-limits';
 export function refusal(code, error, seconds = 60, status = 429, now = Date.now()) {
@@ -23,8 +23,10 @@ export function budgetRefusal(reset, now = Date.now()) {
 // One globally named SQLite Durable Object; synchronous transactions reserve
 // capacity before a caller can forward anything to the private Python service.
 export class BudgetLedger {
-  constructor(storage, allowance = POLICY.allowanceMicroUsd) {
+  constructor(storage, allowance = POLICY.allowanceMicroUsd, chatLimit = POLICY.chatMinute) {
     if (!Number.isSafeInteger(allowance) || allowance < 0 || allowance > POLICY.allowanceMicroUsd) throw new Error('Invalid budget configuration');
+    if (!Number.isSafeInteger(chatLimit) || chatLimit < 1 || chatLimit > POLICY.chatMinute) throw new Error('Invalid admission configuration');
+    this.chatLimit = chatLimit;
     this.storage = storage;
     this.sql = storage.sql;
     this.allowance = allowance;
@@ -51,7 +53,7 @@ export class BudgetLedger {
         this.sql.exec('DELETE FROM clients WHERE expires <= ?', now);
         g.cleanupHour = hour;
       }
-      if (g.requests >= POLICY.globalMinute || (kind === 'chat' && g.chats >= POLICY.chatMinute)) {
+      if (g.requests >= POLICY.globalMinute || (kind === 'chat' && g.chats >= this.chatLimit)) {
         return refusal('capacity_busy', 'Shared free capacity is busy. Try again after the indicated delay.', (minute + 1) * 60 - now / 1000, 429, now);
       }
       const row = [...this.sql.exec('SELECT value FROM clients WHERE id = ?', client)][0];
@@ -69,7 +71,7 @@ export class BudgetLedger {
       if (kind !== 'status') this.sql.exec('UPDATE budget SET reserved = reserved + ? WHERE hour = ?', POLICY.forwardMicroUsd, hour);
       return { status: 200, body: { ok: true, budget: { mode: 'conservative_reservation', window_days: 31,
         allowance_usd: this.allowance / 1e6, reserved_usd: (totals.reserved + cost) / 1e6,
-        earliest_capacity_return: new Date(reset).toISOString(), invoice_cap: false }, limits: POLICY, docs: DOCS } };
+        earliest_capacity_return: new Date(reset).toISOString(), invoice_cap: false }, limits: { ...POLICY, chatMinute: this.chatLimit }, docs: DOCS } };
     });
   }
 }

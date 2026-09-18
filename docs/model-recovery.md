@@ -1,40 +1,57 @@
-# Model recovery
+# Automatic model recovery
 
-Auto is for getting a working agent quickly. An explicit `/model vendor/model:free`
-selection remains pinned, even when that model fails.
+Bailout v0.6 uses Auto routing: no model picker or local provider setup. The hosted
+backend chooses a working free route; the terminal reports recovery and the model
+that answered. Older API clients may still pin an explicit free model. A pinned
+request can retry that model, but never silently changes it.
 
 ## Recovery rules
 
-The backend allows at most **three provider attempts per model response**, under
-one **120-second deadline** including pricing checks. Auto gives each inference
-up to 40 seconds; pinned inference gets up to 90 seconds within the same deadline.
-It skips providers without verified free pricing, tool support and healthy status.
-Every fallback fetches fresh model and endpoint prices and retains zero-price caps.
+One model response has at most **four upstream attempts** and a **120-second
+end-to-end deadline**, including eligibility checks, capacity waits and retries.
+Auto gives each inference at most 40 seconds. A legacy pinned attempt gets at most
+90 seconds within the same deadline. There is no unbounded retry loop.
 
-Auto can recover from transport timeouts, provider outages, clearly provider-scoped
-rate limits, broken streams, empty replies and malformed Bash calls. Account/key
-quotas, unknown-scope rate limits, authentication failures, access/content-policy
-blocks, invalid input, length limits and unexpected billed cost are terminal.
-Pricing metadata failures also stop inference. Recovery does not change privacy,
-provider permissions, model pricing, or the gateway's spending and fair-use limits.
+- A temporary HTTP 429 gets one delayed retry of the same model. Respect numeric
+  or HTTP-date `Retry-After`, add jitter, and wait at most 10 seconds for that retry.
+  A longer delay moves to an eligible alternative instead of retrying early.
+- An ambiguous 429 is not automatically called an exhausted account. It can retry
+  once and then move to another model. Each attempt still consumes provider quota.
+- A known account/daily quota or authentication failure disables that provider for
+  the request. Auto can use a separately configured free provider; changing models
+  or keys within the exhausted account does not create more quota.
+- Timeouts, connection failures, broken streams and invalid responses can move to
+  another eligible model. Policy refusals, invalid user input, length limits,
+  unexpected charges and the hosting cutoff stop recovery.
+- Unknown pricing disables the affected route. Every OpenRouter inference,
+  including same-model retries, gets current model and endpoint checks and hard
+  zero-price routing caps. Direct providers require an explicitly verified Free
+  account with billing disabled; a model's name is not proof of free billing.
 
-The CLI remembers a successful Auto model for its process/session and avoids
-failed models for five minutes, or longer for a numeric provider `Retry-After`
-(up to 24 hours). These hints are held only in memory, are never identity or
-authorization, and cannot make a paid/unhealthy model eligible. There is no
-cross-user health database, session ID, prompt log or telemetry request. Closing
-the process clears the hints. Explicitly choosing a model ignores Auto hints.
+A shared SQLite Durable Object reserves **every upstream attempt**, including
+retries. It applies rolling request/token quotas, at most eight concurrent calls
+per provider, and two per model. This prevents a burst from spending all available
+slots on one failing model. Rejected and timed-out attempts remain counted;
+successful reported token usage reconciles conservative reservations. Abandoned
+concurrency leases expire after 120 seconds.
 
-Completed commands remain in conversation history with their results. Recovery
-retries only the unfinished model response, discards its partial tool calls, and
-never reruns completed Bash commands. Model-specific reasoning signatures are
-removed when switching models, while conversation text and tool results remain.
-Ordinary Bash failures are passed to the model to diagnose; they do not trigger a
-model switch by themselves. Ctrl-C cancels recovery and pending local commands.
+Busy routes get shared cooldowns, so the next user benefits from earlier failures.
+The terminal also keeps a successful-model preference and short failure hints in
+memory. Neither hints nor caller-supplied model IDs can override price checks,
+provider quotas or the hosting budget. Short capacity waits total at most 20
+seconds; other configured pools are tried first. If all free pools are unavailable,
+return `free_capacity_exhausted` with the known retry delay. This is best-effort
+capacity, not a guarantee of a free response or a complete session.
+
+Completed Bash commands remain in history with their results. Recovery only retries
+the unfinished model response; it never replays completed commands. Discard partial
+tool calls. Strip provider-specific reasoning metadata when changing models while
+preserving conversation text and completed tool results. Ordinary Bash errors go
+back to the model to diagnose. Ctrl-C cancels recovery and local commands.
 
 ## Client protocol
 
-`POST /v1/chat` accepts `model`, `messages`, `stream`, and these optional Auto hints:
+`POST /v1/chat` accepts `model`, `messages`, `stream`, and optional Auto hints:
 
 ```json
 {
@@ -46,26 +63,20 @@ model switch by themselves. Ctrl-C cancels recovery and pending local commands.
 }
 ```
 
-`avoid_models` permits at most 35 IDs. Hints are rejected on pinned requests.
-The backend owns retry limits; the CLI does not automatically resubmit requests
-after an API/transport error and multiply that limit.
+Hints allow at most 35 route IDs and are rejected on pinned requests. The backend
+owns retries; the CLI does not resubmit failed HTTP requests and multiply that
+budget. Direct-provider route IDs are server aliases for verified free-tier
+access, rather than upstream model identifiers or zero list-price claims.
 
-Streaming returns NDJSON. An initial `model` event identifies the current attempt.
-When an attempt fails, a `model` event with `retry: true`, `notice`, `failed_models`
-and `cooldown_seconds` marks its output as discarded. Clear provisional tool
-assembly, separate any displayed partial text, and wait for the next attempt.
-These additive fields remain readable by older clients; v0.5 adds the recovery
-notice and session hints.
+Streaming returns NDJSON `model`, `text`, `done`, and `error` events. A `model`
+event with `retry: true` and `notice` announces waiting or a discarded attempt.
+Reset provisional output/tool assembly. Only one final `done` event authorizes
+commands; use its validated complete `message`, never partial text. It includes
+the successful model, provider, failed-model hints and cooldown. An `error` event
+is terminal even under HTTP 200. Non-streaming clients receive a final JSON result
+or a JSON error with the matching HTTP status and `Retry-After` when known.
 
-Only one final `done` event can authorize tool execution. Use its complete
-`message`; never assemble executable tool calls from partial text. It includes
-the successful `model`, `failed_models`, and `cooldown_seconds`. An `error` event
-is terminal even under HTTP 200. Non-streaming clients receive the same final
-metadata or a JSON error with an appropriate HTTP status. Safe error codes are
-documented in [service limits](service-limits.md); raw provider bodies, which may
-contain prompts or internal details, are not exposed or logged.
-
-Public provider health is an eligibility signal, not a guarantee of account
-access. If all eligible models or the shared service are unavailable, bailout
-stops clearly; it cannot repair an upstream account or hosting outage by switching
-models.
+No prompts, file contents or credentials are stored in the quota ledger. It retains
+unlinked attempt timestamps, token reservations and cooldowns for at most a day,
+cleaned on subsequent use. Raw provider errors are not exposed or logged.
+See [service limits](service-limits.md) for the error contract and hosting budget.

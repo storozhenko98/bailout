@@ -1,14 +1,27 @@
 import { BudgetLedger, budgetRefusal, refusal } from './budget.js';
 import { PublicStats, publicStatsResponse } from './stats.js';
+import { CapacityLedger, PROVIDERS } from './capacity.js';
 
 export class BudgetGuard {
   constructor(ctx, env) {
     this.ctx = ctx;
-    this.ledger = new BudgetLedger(ctx.storage, Number(env.BUDGET_ALLOWANCE_MICRO_USD));
+    this.ledger = new BudgetLedger(ctx.storage, Number(env.BUDGET_ALLOWANCE_MICRO_USD), Number(env.CHAT_ADMISSIONS_PER_MINUTE || 60));
+    this.capacity = new CapacityLedger(ctx.storage);
+    this.providers = (env.PROVIDER_POOL || 'openrouter').split(',').filter(p => Object.hasOwn(PROVIDERS, p));
     this.stats = new PublicStats(ctx.storage, Date.now(), fetch, env.GITHUB_STATS_TOKEN);
   }
   async fetch(request) {
     const path = new URL(request.url).pathname;
+    // This object has no public HTTP route. Only the private API service can
+    // reserve provider attempts; gateway allowlists reject these paths.
+    if (path.startsWith('/capacity/') && request.method === 'POST') {
+      const data = await request.json();
+      if (path === '/capacity/reserve') return Response.json(this.capacity.reserve(data.provider, data.model, data.tokens));
+      if (path === '/capacity/settle') this.capacity.settle(data.permit, data.tokens);
+      else if (path === '/capacity/cooldown') this.capacity.cooldown(data.provider, data.model, data.seconds);
+      else return new Response(null, { status: 404 });
+      return Response.json({ ok: true });
+    }
     if (path === '/stats' && request.method === 'GET') {
       // Serve the snapshot immediately; a slow GitHub request must not make
       // either counter disappear or block the shared admission object.
@@ -22,6 +35,7 @@ export class BudgetGuard {
     if (path !== '/admit' || request.method !== 'POST') return new Response(null, { status: 404 });
     const { client, kind } = await request.json();
     const result = this.ledger.admit(client, kind);
+    if (kind === 'status' && result.status === 200) result.body.provider_limits = Object.fromEntries(this.providers.map(p => [p, PROVIDERS[p]]));
     return response(result);
   }
   async alarm() { await this.stats.refresh(); }
@@ -63,7 +77,7 @@ export default {
       return publicStatsResponse(env);
     }
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
-      return response({ status: 200, body: { ok: true, service: 'bailout', version: '0.4.0', free_only: true,
+      return response({ status: 200, body: { ok: true, service: 'bailout', version: '0.6.0', free_only: true,
         framework: 'FastAPI', status: '/v1/status', docs: 'https://bailout.dev/docs/#service-limits' } });
     }
     const isChat = url.pathname === '/v1/chat';

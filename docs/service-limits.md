@@ -14,7 +14,7 @@ including model lists, status and API documentation, count toward these limits:
 | Client IP | 300 requests per hour |
 | Client IP | 1,000 requests per UTC day |
 | All clients combined | 120 requests per minute |
-| All clients combined, chat | 18 requests per minute |
+| All clients combined, chat admissions | 60 requests per minute |
 
 IPv6 addresses share a limit within their /64. People behind the same NAT share
 an IP limit. An installation ID or user-supplied forwarding header cannot bypass
@@ -22,7 +22,16 @@ it. These are fixed windows, so adjacent windows can admit a boundary burst.
 Cheap Cloudflare rate-limit bindings additionally reject bursts before the shared
 gate (60/IP/minute and 240/location/minute); those preliminary limits are approximate.
 The global SQLite Durable Object makes the final admission decision atomically.
-OpenRouter may impose lower quotas. A refusal never selects a paid model.
+These are gateway admissions, not promised model calls. Separately, the provider
+ledger permits 18 OpenRouter inference attempts per rolling minute and 1,000 per
+rolling 24 hours. Retries count. Upstream account limits or other applications on
+the same account can reduce the available capacity. When explicitly enabled on a
+verified Free organization, the Groq pool is capped conservatively at 28 attempts
+per minute, 950 per 24 hours, 7,800 tokens per minute and 190,000 per 24 hours.
+Token quotas often bind before request counts. `GET /v1/status` lists configured
+provider limits; a provider adapter being in the source does not mean it is live.
+Each provider allows at most eight concurrent calls and each model at most two.
+A refusal never enables paid inference.
 
 ## Hosting allowance
 
@@ -31,14 +40,14 @@ $35 for conservatively reserved API work, and $10 headroom. This is **not a hard
 Cloudflare invoice cap**. Taxes, other account services, traffic rejected before
 the ledger, and continued requests after shutdown can still incur charges.
 
-Before forwarding a request, the gate reserves $0.000110 for backend work, plus
+Before forwarding a request, the gate reserves $0.000300 for backend work, plus
 $0.000010 for checking capacity. The Python Worker is limited to 5,000 CPU ms per
 request; at $0.02/million CPU ms that costs at most approximately $0.000100,
 before the extra allowance for gateway and storage work. The 50 ms JavaScript
 Worker limits, body-size limit, and route allowlist bound individual requests.
 No credit is taken for the plan's included usage. Failed or cancelled requests
 are not refunded. The counter deliberately overestimates ordinary work; it is
-not live billing data. Around 291,666 forwarded requests would consume the
+not live billing data. Around 112,903 forwarded requests would consume the
 allowance, fewer when other gate requests are included.
 
 Reservations persist in one named Durable Object across deployments. Hourly
@@ -79,12 +88,12 @@ is the earliest capacity return, not a promise that an entire session will fit.
 | 429 | `client_rate_limited` | Wait for `Retry-After`; do not rotate identities to evade the quota. |
 | 429 | `capacity_busy` | Shared capacity is busy; honor `Retry-After` and add jitter when retrying. |
 | 503 | `service_paused` | Operator pause; display the message and wait. |
-| 503 | `service_unavailable` | Capacity verification or backend connection failed; stop the current operation. |
-| 429 | `upstream_rate_limited` | Shared or unknown-scope OpenRouter limit; stop and honor `Retry-After` when supplied. |
+| 503 | `service_unavailable` / `capacity_unavailable` | Capacity verification or backend connection failed; stop the current operation. |
+| 429 | `upstream_rate_limited` / `provider_rate_limited` / `free_capacity_exhausted` | Bounded backend recovery could not obtain capacity; honor the returned delay. |
 | 503 | `upstream_authentication` | Hosted service authentication failed; stop. |
-| 503 | `upstream_quota` | Account allowance exhausted; stop. Never enable paid routing. |
+| 429/503 | `upstream_quota` | Account allowance exhausted; stop. Never enable paid routing. |
 | 503 | `upstream_policy` | Access or content policy blocked the request; stop without switching models. |
-| 503/504 | `recovery_exhausted` | Three attempts or 120 seconds exhausted; display the error and wait. |
+| 503/504 | `recovery_exhausted` | Four attempts or 120 seconds exhausted; display the error and wait. |
 | 503 | `pricing_unavailable` / `no_free_models` | No safely eligible free route; stop. |
 | 502 | `unexpected_cost` | Cost audit failed; stop and investigate the provider. |
 
@@ -96,7 +105,7 @@ validated `done` event authorizes executing tools; partial responses do not.
 After stream headers are sent, backend errors use an NDJSON `error` event under
 HTTP 200 with the same machine-readable codes. Do not treat HTTP 200 alone as a
 completed model response. Auto's internal provider retries share one admission
-and a maximum of three attempts / 120 seconds. The CLI does not resubmit a failed
+and a maximum of four attempts / 120 seconds. The CLI does not resubmit a failed
 API request and multiply that budget. See [model recovery](model-recovery.md).
 
 ## Operator controls
@@ -111,7 +120,12 @@ npx wrangler deploy --config gateway.wrangler.jsonc
 
 Restore it to `"false"` to resume; this does not reset the persistent budget.
 A source change is intentionally required for a larger allowance. Do not expose
-`api` directly. Deploy Python first, then the gateway, then the static-site Worker.
+`api` directly. For this upgrade, deploy the gateway's new capacity endpoints with
+`--var CHAT_ADMISSIONS_PER_MINUTE:18`, then deploy Python with its cross-Worker
+`CAPACITY` binding, then redeploy the gateway without that temporary override.
+This preserves the old admission limit until every upstream attempt is metered.
+Deploy the static site after verifying the API. Never delete or rename the existing
+`global-v1` Durable Object to reset quotas or budgets.
 
 Cloudflare Billing budget alerts monitor actual account-wide metered spend;
 they are separate from the conservative admission counter and can lag. Configure
@@ -122,10 +136,25 @@ Review the live ledger and billing dashboard after changes to price or CPU limit
 The gate stores hourly aggregate reservations and daily IP hashes with short
 expiry. Hashes are pseudonyms, not anonymization. Client rows expire after the
 following UTC day and are cleaned when the gate next processes traffic. No
-prompts, file contents or credentials are stored in the ledger.
+prompts, file contents or credentials are stored in the ledger. Provider attempt
+timestamps, token reservations and leases have no client identity; these expire
+after 24 hours and are cleaned on subsequent requests. Cooldowns also expire.
 
 Separate [public usage totals](public-stats.md) retain a lifetime request integer
 from the time counting is enabled, plus aggregate GitHub binary-download counts.
 The cached, read-only `/v1/stats` endpoint does not consume the model allowance or
 call Python/OpenRouter and stays available during a cutoff. It has a separate
 burst-limit key; cache misses and counter writes still incur hosting work.
+
+## Direct free-provider setup
+
+Groq is optional and disabled by default. Use a Free organization with no paid
+upgrade or automatic billing. Verify the account's actual limits before enabling
+it. Put its key in the Python Worker's encrypted `GROQ_API_KEY` secret, then set
+`GROQ_FREE_ONLY=true` in that Worker's variables. Add `groq` to the gateway's
+comma-separated `PROVIDER_POOL` variable so status reflects the enabled pool.
+Do not set the flag for a paid organization: Groq model metadata does not expose
+account billing status, so the operator's account configuration is the prerequisite
+for zero-cost eligibility. Revoke or disable this route before changing the account
+to a paid plan. No Gemini, paid fallback or trial-credit route is enabled by this
+adapter. Provider keys stay on the backend.

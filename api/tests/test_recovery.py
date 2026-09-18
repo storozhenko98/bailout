@@ -42,7 +42,7 @@ async def stream(route, request):
 
 
 @pytest.mark.parametrize("failure", [
-    lambda: error(503), lambda: error(429, provider_name="provider"),
+    lambda: error(503),
     lambda: TimeoutError(), lambda: ConnectionError(),
     lambda: Response(None, raw=b"data: broken\n\n"),
     lambda: Response(None, raw=sse(dict(choices=[dict(delta=dict(content="discard this"))]), done=False)),
@@ -64,8 +64,8 @@ async def test_auto_recovers_with_one_valid_final_response(failure):
 @pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.parametrize("status,metadata,code", [
     (401, {}, "upstream_authentication"), (402, {}, "upstream_quota"),
-    (403, {}, "upstream_policy"), (429, {}, "upstream_rate_limited"),
-    (429, dict(provider_name="provider", limit_source="openrouter_daily"), "upstream_rate_limited"),
+    (403, {}, "upstream_policy"),
+    (429, dict(provider_name="provider", limit_source="openrouter_daily"), "upstream_quota"),
     (400, {}, "invalid_model_request"),
 ])
 async def test_global_refusals_never_fall_back(streaming, status, metadata, code):
@@ -82,7 +82,7 @@ async def test_global_refusals_never_fall_back(streaming, status, metadata, code
     assert len(stub.inferences()) == 1
 
 
-@pytest.mark.parametrize("status", [401, 402, 403, 429])
+@pytest.mark.parametrize("status", [401, 402, 403])
 async def test_in_stream_global_refusal_is_also_terminal(status):
     stub = Sequence([Response(None, raw=sse(dict(error=dict(code=status)))), stream_answer()])
     events = await stream(Router(stub, "test"), data(stream=True))
@@ -97,7 +97,7 @@ async def test_cost_audit_stops_even_if_stream_then_breaks():
     assert len(stub.inferences()) == 1
 
 
-@pytest.mark.parametrize("failure", [lambda: error(503), lambda: TimeoutError(), lambda: error(429, provider_name="provider")])
+@pytest.mark.parametrize("failure", [lambda: error(503), lambda: TimeoutError()])
 async def test_pinned_never_switches(failure):
     stub = Sequence([failure(), stream_answer()])
     events = await stream(Router(stub, "test"), data("test/a:free", stream=True))
@@ -109,9 +109,9 @@ async def test_pinned_never_switches(failure):
 async def test_attempt_ceiling_and_failed_models_on_exhaustion():
     stub = Sequence([error(503) for _ in range(4)])
     events = await stream(Router(stub, "test"), data(stream=True))
-    assert len(stub.inferences()) == 3
+    assert len(stub.inferences()) == 4
     assert events[-1]["code"] == "recovery_exhausted"
-    assert events[-1]["failed_models"] == [f"test/{c}:free" for c in "abc"]
+    assert events[-1]["failed_models"] == [f"test/{c}:free" for c in "abcd"]
 
 
 async def test_nonstream_invalid_result_recovers_and_retains_history():
@@ -218,7 +218,7 @@ async def test_switch_strips_opaque_reasoning_but_keeps_completed_tools():
     assert stub.inferences()[1]["messages"][2]["content"] == "already ran"
 
 
-@pytest.mark.parametrize("status", [401, 429])
+@pytest.mark.parametrize("status", [401])
 async def test_unreadable_global_error_body_never_becomes_a_retry(monkeypatch, status):
     monkeypatch.setattr(policy, "AUTO_ATTEMPT_SECONDS", .01)
     class Slow(Response):

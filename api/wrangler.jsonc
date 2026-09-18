@@ -10,6 +10,7 @@
     "enabled": false
   },
   "routes": [],
+  "durable_objects": { "bindings": [{ "name": "CAPACITY", "class_name": "BudgetGuard", "script_name": "bailout-gateway" }] },
   "preview_urls": false,
   "limits": {
     "cpu_ms": 5000

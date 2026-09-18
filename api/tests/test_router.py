@@ -138,10 +138,10 @@ async def test_fallback_rechecks_free_prices_and_pinned_model_stays_pinned():
         return response
     stub.request = request
     with pytest.raises(Failure): await Router(stub, 'test-key').chat(data())
-    assert [b['model'] for b in stub.inferences()] == ['test/a:free']
+    assert [b['model'] for b in stub.inferences()] == ['test/a:free', 'test/a:free']
     pinned = Upstream(catalog=[model('test/a:free'), model('test/b:free')], status=429)
     with pytest.raises(Failure): await Router(pinned, 'test-key').chat(data('test/a:free'))
-    assert len(pinned.inferences()) == 1
+    assert len(pinned.inferences()) == 2
 
 
 def test_malformed_and_cost_audit():

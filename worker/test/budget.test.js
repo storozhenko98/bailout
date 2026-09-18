@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { CapacityLedger } from '../src/capacity.js';
 import { BudgetLedger, POLICY } from '../src/budget.js';
 import gateway, { clientNetwork } from '../src/gateway.js';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
@@ -21,9 +22,9 @@ function ledger(allowance) {
 const client = 'a'.repeat(64), now = Date.UTC(2026, 8, 17, 12);
 
 test('reservation happens before admission, persists across restart and fails at exact boundary', () => {
-  const { gate, storage } = ledger(240);
+  const { gate, storage } = ledger(620);
   assert.equal(gate.admit(client, 'chat', now).status, 200);
-  assert.equal(new BudgetLedger(storage, 240).admit(client, 'chat', now).status, 200);
+  assert.equal(new BudgetLedger(storage, 620).admit(client, 'chat', now).status, 200);
   const denied = gate.admit(client, 'chat', now);
   assert.equal(denied.status, 503);
   assert.equal(denied.body.code, 'budget_exhausted');
@@ -33,7 +34,7 @@ test('reservation happens before admission, persists across restart and fails at
 });
 
 test('all model, status and docs admissions share the allowance; rejected attempts cost reserves', () => {
-  const { gate } = ledger(250);
+  const { gate } = ledger(630);
   assert.equal(gate.admit(client, 'read', now).status, 200);
   assert.equal(gate.admit(client, 'chat', now).status, 200);
   assert.equal(gate.admit(client, 'status', now).status, 200);
@@ -65,7 +66,7 @@ test('IPv6 addresses in a /64 and mapped IPv4 cannot evade identity grouping', (
 });
 
 function runtime(allowance, api) {
-  return new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'gateway', modules: ['gateway.js', 'budget.js', 'stats.js'].map(name => ({type:'ESModule', path:fileURLToPath(new URL('../src/' + name, import.meta.url))})), compatibilityDate: '2026-09-17',
+  return new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'gateway', modules: ['gateway.js', 'budget.js', 'stats.js', 'capacity.js'].map(name => ({type:'ESModule', path:fileURLToPath(new URL('../src/' + name, import.meta.url))})), compatibilityDate: '2026-09-17',
     bindings: { BUDGET_ALLOWANCE_MICRO_USD: String(allowance), SERVICE_PAUSED: 'false' },
     durableObjects: { BUDGET: { className: 'BudgetGuard', useSQLite: true } },
     ratelimits: { EDGE_IP_LIMIT: { namespace_id: '1005', simple: { limit: 60, period: 60 } }, EDGE_GLOBAL_LIMIT: { namespace_id: '1006', simple: { limit: 240, period: 60 } } },
@@ -76,7 +77,7 @@ function runtime(allowance, api) {
 
 test('real Workers runtime serializes concurrent reservations; denied calls never reach backend', async () => {
   let upstream = 0;
-  const mf = runtime(240, async req => { upstream++; assert.equal(req.headers.get('Authorization'), null); return Response.json({ ok: true }); });
+  const mf = runtime(620, async req => { upstream++; assert.equal(req.headers.get('Authorization'), null); return Response.json({ ok: true }); });
   try {
     const responses = await Promise.all(Array.from({ length: 12 }, (_, i) => mf.dispatchFetch('https://api.test/v1/chat', { method: 'POST', headers: { 'CF-Connecting-IP': `192.0.2.${i + 1}`, 'Content-Type': 'application/json', Authorization: 'untrusted' }, body: '{"messages":[]}' })));
     assert.equal(responses.filter(r => r.status === 200).length, 2);
@@ -140,4 +141,63 @@ test('deployed limits and service bindings preserve the reservation assumptions'
   assert.equal(gateway.services[0].service, api.name); assert.equal(site.services[0].service, gateway.name);
   assert.equal(site.limits.cpu_ms, 50); assert.equal(gateway.limits.cpu_ms, 50);
   assert.ok(POLICY.forwardMicroUsd > (api.limits.cpu_ms + site.limits.cpu_ms + gateway.limits.cpu_ms) * .02);
+});
+
+test('every upstream attempt shares a rolling quota across object restarts and minute boundaries', () => {
+  const { storage } = ledger();
+  const capacity = new CapacityLedger(storage);
+  for (let i = 0; i < 18; i++) { const admitted = capacity.reserve('openrouter', 'test/a:free', 100, now + 59999); assert.equal(admitted.ok, true); capacity.settle(admitted.permit, null); }
+  const next = new CapacityLedger(storage);
+  const denied = next.reserve('openrouter', 'test/b:free', 100, now + 60000);
+  assert.equal(denied.ok, false); assert.equal(denied.retry_after_seconds, 60);
+  assert.equal(next.reserve('openrouter', 'test/a:free', 100, now + 119999).ok, true);
+});
+
+test('token reservations prevent overcommit, reconcile usage, and preserve rejected attempts', () => {
+  const { storage } = ledger();
+  const capacity = new CapacityLedger(storage);
+  const first = capacity.reserve('groq', 'groq/gpt-oss-120b:free', 6000, now);
+  assert.equal(first.ok, true);
+  assert.equal(capacity.reserve('groq', 'groq/gpt-oss-120b:free', 6000, now).ok, false);
+  capacity.settle(first.permit, 1000);
+  assert.equal(capacity.reserve('groq', 'groq/gpt-oss-120b:free', 6000, now).ok, true);
+  assert.equal(capacity.reserve('groq', 'groq/gpt-oss-120b:free', 8000, now).code, 'route_context_capacity');
+  assert.equal(capacity.reserve('openrouter', 'test/a:free', 9000, now).ok, true);
+});
+
+test('model cooldown preserves other models, provider cooldown preserves independent pools', () => {
+  const { storage } = ledger(); const capacity = new CapacityLedger(storage);
+  capacity.cooldown('openrouter', 'test/a:free', 300, now);
+  assert.equal(capacity.reserve('openrouter', 'test/a:free', 0, now).scope, 'model');
+  assert.equal(capacity.reserve('openrouter', 'test/b:free', 0, now).ok, true);
+  capacity.cooldown('openrouter', null, 3600, now);
+  assert.equal(capacity.reserve('openrouter', 'test/b:free', 0, now).scope, 'provider');
+  assert.equal(capacity.reserve('groq', 'groq/gpt-oss-120b:free', 100, now).ok, true);
+  assert.equal(capacity.reserve('openrouter', 'test/a:free', 0, now + 3600000).ok, true);
+  assert.throws(() => capacity.reserve('unknown', 'model', 0, now));
+  assert.throws(() => capacity.reserve('groq', 'model', -1, now));
+});
+
+test('daily provider allowance survives restarts and does not double on midnight rollover', () => {
+  const { storage } = ledger(); const capacity = new CapacityLedger(storage);
+  for (let i = 0; i < 1000; i++) assert.equal(capacity.reserve('openrouter', 'test/a:free', 0, now + i * 60000).ok, true);
+  const later = new CapacityLedger(storage);
+  const denied = later.reserve('openrouter', 'test/a:free', 0, now + 1000 * 60000);
+  assert.equal(denied.ok, false); assert.equal(denied.retry_after_seconds, 86400 - 60000);
+  assert.equal(later.reserve('openrouter', 'test/a:free', 0, now + 86400000).ok, true);
+});
+
+test('100 concurrent provider attempts admit only the rolling allowance in the real Workers runtime', async () => {
+  const mf = runtime(35000000, () => Response.json({}));
+  try {
+    const namespace = await mf.getDurableObjectNamespace('BUDGET');
+    const stub = namespace.get(namespace.idFromName('global-v1'));
+    const results = await Promise.all(Array.from({ length: 100 }, (_, i) => stub.fetch('https://capacity/capacity/reserve', {
+      method: 'POST', body: JSON.stringify({ provider: 'openrouter', model: `test/coder${i % 10}:free`, tokens: 1000 }),
+    }).then(r => r.json())));
+    assert.equal(results.filter(r => r.ok).length, 8);
+    assert.equal(results.filter(r => !r.ok).length, 92);
+    assert.ok(results.filter(r => !r.ok).every(r => r.retry_after_seconds > 0));
+    assert.equal((await mf.dispatchFetch('https://api.test/capacity/reserve', { method: 'POST' })).status, 404);
+  } finally { await mf.dispose(); }
 });

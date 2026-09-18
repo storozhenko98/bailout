@@ -3,10 +3,13 @@ import asyncio
 import codecs
 import json
 import re
+import random
 from contextlib import aclosing
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
 from decimal import Decimal, InvalidOperation
 from time import monotonic
+from capacity import LocalCapacity
 
 ORIGIN = "https://openrouter.ai/api/v1"
 MODEL_ID = re.compile(r"^[\w.-]+/[\w.-]+:free$")
@@ -15,6 +18,11 @@ REQUEST_SECONDS = 120
 AUTO_ATTEMPT_SECONDS = 40
 PINNED_ATTEMPT_SECONDS = 90
 COOLDOWN_SECONDS = 300
+MAX_ATTEMPTS = 4
+MAX_RETRY_WAIT = 10
+MAX_CAPACITY_WAIT = 20
+GROQ_ORIGIN = "https://api.groq.com/openai/v1"
+GROQ_MODEL = "groq/gpt-oss-120b:free"
 BASH_TOOL = {
     "type": "function",
     "function": {
@@ -36,9 +44,10 @@ BASH_TOOL = {
 
 
 class Failure(Exception):
-    def __init__(self, status, message, *, code="request_failed", recoverable=None):
+    def __init__(self, status, message, *, code="request_failed", recoverable=None, scope="model"):
         self.status, self.message = status, message
         self.code = code
+        self.scope = scope
         self.recoverable = status in (502, 504) if recoverable is None else recoverable
         self.failed_models = []
         self.retry_after_seconds = None
@@ -46,9 +55,11 @@ class Failure(Exception):
 
     def payload(self):
         result = {"error": self.message, "code": self.code, "failed_models": self.failed_models,
-                  "cooldown_seconds": max(COOLDOWN_SECONDS, self.retry_after_seconds or 0)}
+                  "cooldown_seconds": max(COOLDOWN_SECONDS, self.retry_after_seconds or 0),
+                  "docs": "https://bailout.dev/docs/#service-limits"}
         if self.retry_after_seconds is not None:
             result["retry_after_seconds"] = self.retry_after_seconds
+            result["resets_at"] = (datetime.now(timezone.utc) + timedelta(seconds=self.retry_after_seconds)).isoformat()
         return result
 
 
@@ -65,14 +76,14 @@ def upstream_failure(status, result):
     if isinstance(code, int):
         status = code
     if status == 401 or kind == "authentication":
-        return Failure(503, "OpenRouter could not authenticate the hosted service. Try again later.", code="upstream_authentication", recoverable=False)
+        return Failure(503, "A model provider could not authenticate the hosted service.", code="upstream_authentication", recoverable=True, scope="provider")
     if status == 402 or kind in {"payment_required", "token_limit_exceeded"}:
-        return Failure(503, "OpenRouter's account allowance is exhausted. No paid fallback was used.", code="upstream_quota", recoverable=False)
+        return Failure(503, "A provider's free allowance is exhausted. No paid fallback was used.", code="upstream_quota", recoverable=True, scope="provider")
     if status == 403 or kind in {"permission_denied", "content_policy_violation", "refusal"}:
         return Failure(503, "OpenRouter or the provider blocked this request under its access or content policy. No model switch was attempted.", code="upstream_policy", recoverable=False)
     if status == 429 or kind == "rate_limit_exceeded":
-        # Unknown scope fails closed. Only a clearly provider-scoped limit can
-        # justify trying another model; account/key/daily limits must not be retried.
+        # An ambiguous 429 is not proof the whole account is exhausted. Allow
+        # one delayed retry, then another model, all through the shared meter.
         source = str(metadata.get("limit_source", "")).lower()
         scope = str(metadata.get("scope", "")).lower()
         message = str(error.get("message", "")).lower()
@@ -80,12 +91,29 @@ def upstream_failure(status, result):
                         or any(s in message for s in ("daily", "per day", "per-day", "account", "api key", "credits")))
         provider_limit = (bool(metadata.get("provider_name")) and not global_limit
                           and source in {"", "provider", "provider_rate_limit"} and scope in {"", "provider", "model"})
-        return Failure(429, "The provider is busy." if provider_limit else "OpenRouter's shared rate limit was reached. Wait before retrying.",
-                       code="provider_rate_limited" if provider_limit else "upstream_rate_limited", recoverable=provider_limit)
+        exhausted = (any(s in message for s in ("daily", "per day", "per-day", "credits"))
+                     or "daily" in source or kind == "daily_limit_exceeded")
+        failure = Failure(429, "Free model capacity is temporarily busy. No paid fallback was used.",
+                          code="upstream_quota" if exhausted else "provider_rate_limited" if provider_limit else "upstream_rate_limited",
+                          recoverable=True, scope="provider" if global_limit or exhausted else "model")
+        if exhausted:
+            failure.retry_after_seconds = 3600
+        return failure
     if kind in {"invalid_request", "invalid_prompt", "context_length_exceeded", "string_too_long", "payload_too_large"} or status in (400, 413, 422):
         return Failure(400, "The model could not accept this conversation. Try a smaller task or /new.", code="invalid_model_request", recoverable=False)
     retry = status in (404, 408, 500, 502, 503, 504) or kind in {"timeout", "provider_overloaded", "provider_unavailable", "server"}
     return Failure(502, "The provider could not complete the response.", code="provider_unavailable", recoverable=retry)
+
+
+def retry_seconds(value):
+    """Accept both forms of Retry-After; never shorten the provider's delay."""
+    if not isinstance(value, str):
+        return None
+    try:
+        seconds = float(value) if re.fullmatch(r"\d+(?:\.\d+)?", value.strip()) else (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
+        return max(1, min(86400, int(seconds + .999)))
+    except (ValueError, TypeError, OverflowError):
+        return None
 
 
 def zero(value):
@@ -283,8 +311,11 @@ def check_message(result):
 
 
 class Router:
-    def __init__(self, transport, key):
+    def __init__(self, transport, key, *, capacity=None, groq_key="", groq_free=False, sleep=asyncio.sleep):
         self.transport, self.key = transport, key
+        self.capacity = capacity or LocalCapacity()
+        self.groq_key = groq_key if groq_free else ""
+        self.sleep = sleep
         self.deadline = None
 
     def remaining(self):
@@ -313,6 +344,45 @@ class Router:
             raise Failure(503, "Model catalog is unavailable.")
         return sorted(filter(free_model, result["data"]), key=lambda m: (-ability(m)[0], m["id"]))
 
+    async def groq_model(self):
+        # Groq's models have list prices; this route is enabled only for a
+        # separately verified Free organization with billing disabled. Never
+        # infer free eligibility from a model name or use a paid organization.
+        if not self.groq_key:
+            return None
+        timeout = min(10, self.remaining())
+        try:
+            async with asyncio.timeout(timeout):
+                response = await self.transport.request(GROQ_ORIGIN + "/models", timeout=timeout,
+                    headers={"Authorization": f"Bearer {self.groq_key}", "Cache-Control": "no-store"})
+                if response.status != 200:
+                    await response.close()
+                    return None
+                result = await read_json(response)
+            live = next((m for m in result.get("data", []) if m.get("id") == "openai/gpt-oss-120b" and m.get("active", True)), None)
+        except Exception:
+            return None  # Secondary metadata failure must not break other routes.
+        if not live or live.get("context_window", 0) < 32768:
+            return None
+        return {"id": GROQ_MODEL, "name": "GPT OSS 120B (Groq Free)", "context_length": live["context_window"], "source": "groq", "score": 65}
+
+    async def candidates(self):
+        rows, issue = [], None
+        if self.key:
+            try:
+                rows = await self.catalog()
+            except Failure as exc:
+                issue = exc
+        try:
+            groq = await self.groq_model()
+            if groq:
+                rows.insert(min(1, len(rows)), groq)
+        except Exception:
+            pass  # An unavailable secondary cannot disable verified OR routes.
+        if not rows and issue:
+            raise issue
+        return rows
+
     async def endpoints(self, model):
         result = await self.metadata(f'/models/{model["id"]}/endpoints')
         data = result.get("data", {})
@@ -324,6 +394,8 @@ class Router:
         semaphore = asyncio.Semaphore(5)
         async def inspect(model):
             async with semaphore:
+                if model.get("source") == "groq":
+                    return {"id": model["id"], "name": model["name"], "context_length": model["context_length"], "score": model["score"], "reasons": ["coding", "free account tier"], "available": True, "providers": 1, "uptime": None}
                 try:
                     live = await self.endpoints(model)
                 except Failure:
@@ -332,7 +404,7 @@ class Router:
                 return {"id": model["id"], "name": model.get("name", model["id"]), "context_length": model["context_length"],
                         "score": score, "reasons": reasons, "available": bool(live), "providers": len(live),
                         "uptime": float(max(e["uptime_last_30m"] for e in live)) if live else None}
-        rows = await asyncio.gather(*(inspect(m) for m in (await self.catalog())[:35]))
+        rows = await asyncio.gather(*(inspect(m) for m in (await self.candidates())[:35]))
         rows.sort(key=lambda m: (not m["available"], -m["score"], m["id"]))
         return {"models": rows, "default": next((m["id"] for m in rows if m["available"]), None),
                 "ranking": "coding metadata heuristic, not benchmark scores", "checked_at": now()}
@@ -347,9 +419,9 @@ class Router:
 
     async def prepare(self, data):
         self.deadline = monotonic() + REQUEST_SECONDS
-        if not self.key:
+        if not self.key and not self.groq_key:
             raise Failure(503, "The hosted service is not configured.")
-        catalog = await self.catalog()
+        catalog = await self.candidates()
         if data["model"] == "auto":
             candidates = [m for m in catalog if m["id"] not in data.get("avoid_models", [])]
             preferred = data.get("preferred_model")
@@ -358,102 +430,171 @@ class Router:
         else:
             candidates = [m for m in catalog if m["id"] == data["model"]]
         if not candidates:
-            raise Failure(503, "No eligible free model is available. Wait for recovery or choose another with /model.", code="no_free_models")
+            raise Failure(503, "No eligible free model is available. Please try again later.", code="no_free_models")
         return candidates
 
     async def completion_events(self, data, candidates):
-        attempts, failed = 0, []
-        cooldown = COOLDOWN_SECONDS
+        attempts, failed, blocked = 0, [], set()
+        cooldown, waited = COOLDOWN_SECONDS, 0
         auto = data["model"] == "auto"
-        last = Failure(503, "No healthy verified-free provider is available. Try again later.", code="no_free_models")
+        last = Failure(503, "No free model capacity is available. Try again later.", code="free_capacity_exhausted", recoverable=False)
+        shortest_wait = None
         try:
             for candidate in candidates:
-                self.remaining()
-                if attempts >= 3:
+                source = candidate.get("source", "openrouter")
+                if source in blocked:
+                    continue
+                if attempts >= MAX_ATTEMPTS:
                     break
-                # The initial catalog is fresh for attempt one. Every fallback
-                # gets a new catalog AND endpoint check, including session hints.
-                model = candidate if attempts == 0 else next((m for m in await self.catalog() if m["id"] == candidate["id"]), None)
-                if model is None:
-                    continue
-                live = await self.endpoints(model)
-                if not live:
-                    continue
-                attempts += 1
-                response = None
-                completed = None
-                timeout = min(AUTO_ATTEMPT_SECONDS if auto else PINNED_ATTEMPT_SECONDS, self.remaining())
-                messages = data["messages"]
-                if attempts > 1 or (auto and data.get("preferred_model") not in (None, model["id"])):
-                    # Provider-specific reasoning signatures cannot be transferred
-                    # to another model. Keep every user message and completed tool result.
-                    messages = [{k: v for k, v in m.items() if k != "reasoning_details"} for m in messages]
-                yield {"type": "model", "model": model["id"], "attempt": attempts}
-                try:
-                    async with asyncio.timeout(timeout):
-                        response = await self.transport.request(ORIGIN + "/chat/completions", method="POST", timeout=timeout,
-                            headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json",
-                                     "HTTP-Referer": "https://bailout.dev", "X-OpenRouter-Title": "bailout"},
-                            body=json.dumps(self.body(model, live, messages, data["stream"])))
-                        if response.status != 200:
-                            status = response.status
-                            if status in (400, 401, 402, 403, 413, 422):
-                                raise upstream_failure(status, {})
-                            try:
-                                error = await read_json(response, 64_000)
-                            except Failure:
-                                error = {}
-                            failure = upstream_failure(status, error)
-                            retry_after = getattr(response, "retry_after", None)
-                            if isinstance(retry_after, str) and retry_after.isdigit():
-                                failure.retry_after_seconds = min(int(retry_after), 86400)
-                            raise failure
-                        if data["stream"]:
-                            async for item in self.read_stream(model["id"], response):
-                                if item["type"] == "done":
-                                    completed = item
-                                else:
-                                    yield item
+                for retry in range(2):
+                    self.remaining()
+                    if attempts >= MAX_ATTEMPTS:
+                        break
+                    # Recheck pricing/eligibility for every inference, including
+                    # a retry of the same model. Nothing is sent on unknown prices.
+                    try:
+                        if source == "groq":
+                            model = await self.groq_model()
+                            live = []
                         else:
-                            result = await read_json(response, 2_000_000)
-                            message = check_message(result)
-                            completed = {"type": "done", "model": model["id"], "message": message,
-                                   "usage": {"cost": 0 if result.get("usage", {}).get("cost") is not None else None},
-                                   "checked_at": now()}
-                except Failure as exc:
-                    last = exc
-                except TimeoutError:
-                    last = upstream_failure(429, {}) if response is not None and response.status == 429 else Failure(504, "The model did not respond in time.", code="provider_timeout")
-                except Exception:
-                    last = upstream_failure(429, {}) if response is not None and response.status == 429 else Failure(502, "The provider connection failed or returned an invalid response.", code="provider_unavailable")
-                finally:
-                    if response is not None:
+                            model = candidate if attempts == 0 and retry == 0 else next((m for m in await self.catalog() if m["id"] == candidate["id"]), None)
+                            live = await self.endpoints(model) if model else []
+                        if model is None or (source == "openrouter" and not live):
+                            break
+                    except Failure as exc:
+                        if exc.code == "pricing_unavailable" and auto and self.groq_key:
+                            blocked.add(source)
+                            last = exc
+                            break
+                        raise
+                    messages = data["messages"]
+                    if source != "openrouter" or attempts > 0 or (auto and data.get("preferred_model") not in (None, model["id"])):
+                        messages = [{k: v for k, v in m.items() if k != "reasoning_details"} for m in messages]
+                    body = self.body(model, live, messages, data["stream"])
+                    if source == "groq":
+                        body = {"model": "openai/gpt-oss-120b", "messages": messages, "tools": [BASH_TOOL],
+                                "stream": data["stream"], "max_completion_tokens": 2048, "reasoning_effort": "low"}
+                    # UTF-8 bytes plus structure overhead conservatively bound
+                    # prompt tokens; reserve maximum output before dispatch.
+                    tokens = len(json.dumps({"messages": messages, "tools": [BASH_TOOL]}, ensure_ascii=False).encode()) + 256 + body.get("max_completion_tokens", body.get("max_tokens", 0))
+                    permit = await self.capacity.reserve(source, model["id"], tokens)
+                    if not permit["ok"]:
+                        delay = permit.get("retry_after_seconds", 0)
+                        if delay > 0:
+                            shortest_wait = delay if shortest_wait is None else min(shortest_wait, delay)
+                        # Try the independent pool first. Only the last remaining
+                        # pool waits, and only a bounded time within this request.
+                        alternatives = any(m.get("source", "openrouter") != source and m.get("source", "openrouter") not in blocked for m in candidates)
+                        if permit.get("scope") != "model" and not alternatives and 0 < delay <= MAX_CAPACITY_WAIT - waited and delay + 2 < self.remaining():
+                            yield {"type": "model", "model": model["id"], "retry": True, "notice": f"Free capacity is busy. Retrying in {delay}s…"}
+                            await self.sleep(delay + random.uniform(.05, .25))
+                            waited += delay
+                            continue  # Refresh eligibility and prices after waiting.
+                        if not permit["ok"]:
+                            if permit.get("scope") == "provider" or permit.get("code") in {"provider_capacity", "route_context_capacity"}:
+                                blocked.add(source)
+                            break
+                    attempts += 1
+                    response, completed = None, None
+                    timeout = min(AUTO_ATTEMPT_SECONDS if auto else PINNED_ATTEMPT_SECONDS, self.remaining())
+                    yield {"type": "model", "model": model["id"], "provider": source, "attempt": attempts}
+                    try:
+                        async with asyncio.timeout(timeout):
+                            response = await self.transport.request((GROQ_ORIGIN if source == "groq" else ORIGIN) + "/chat/completions", method="POST", timeout=timeout,
+                                headers={"Authorization": f"Bearer {self.groq_key if source == 'groq' else self.key}", "Content-Type": "application/json",
+                                         "HTTP-Referer": "https://bailout.dev", "X-OpenRouter-Title": "bailout"}, body=json.dumps(body))
+                            if response.status != 200:
+                                status = response.status
+                                if status in (400, 401, 402, 403, 413, 422):
+                                    raise upstream_failure(status, {})
+                                try:
+                                    error = await read_json(response, 64_000)
+                                except Failure:
+                                    error = {}
+                                failure = upstream_failure(status, error)
+                                if source == "groq" and status == 429:
+                                    failure.scope = "provider"  # conservative org-wide bucket
+                                failure.retry_after_seconds = retry_seconds(getattr(response, "retry_after", None)) or failure.retry_after_seconds
+                                raise failure
+                            if data["stream"]:
+                                async for item in self.read_stream(model["id"], response):
+                                    if item["type"] == "done":
+                                        completed = item
+                                    else:
+                                        yield item
+                            else:
+                                result = await read_json(response, 2_000_000)
+                                message = check_message(result)
+                                completed = {"type": "done", "model": model["id"], "message": message,
+                                             "usage": {"cost": 0 if result.get("usage", {}).get("cost") is not None else None},
+                                             "tokens": result.get("usage", {}).get("total_tokens"), "checked_at": now()}
+                    except Failure as exc:
+                        last = exc
+                    except TimeoutError:
+                        last = upstream_failure(429, {}) if response is not None and response.status == 429 else Failure(504, "The model did not respond in time.", code="provider_timeout")
+                    except Exception:
+                        last = upstream_failure(429, {}) if response is not None and response.status == 429 else Failure(502, "The provider connection failed or returned an invalid response.", code="provider_unavailable")
+                    finally:
+                        if response is not None:
+                            try:
+                                await response.close()
+                            except Exception:
+                                pass
+                        if completed is None:
+                            try:
+                                await self.capacity.settle(permit.get("permit"), None)
+                            except Failure:
+                                pass  # An abandoned lease expires after 120s.
+                    if completed is not None:
+                        usage = completed.pop("tokens", None)
+                        # Settlement failure leaves the larger reservation in place.
+                        if not isinstance(usage, int) or isinstance(usage, bool) or not 0 <= usage <= 1000000:
+                            usage = None
                         try:
-                            await response.close()
-                        except Exception:
+                            await self.capacity.settle(permit.get("permit"), usage)
+                        except Failure:
                             pass
-                if completed is not None:
-                    completed.update(failed_models=failed, cooldown_seconds=cooldown)
-                    yield completed
-                    return
-                if not last.recoverable:
-                    raise last
-                failed.append(model["id"])
-                cooldown = max(cooldown, last.retry_after_seconds or 0)
-                if not auto:
-                    raise Failure(last.status, last.message + " Your selected model is unchanged. Use /model auto for automatic recovery.", code=last.code, recoverable=False)
-                if attempts < 3:
-                    # A model event with additive fields remains readable by v0.4.
-                    # Clients must discard partial text/tool calls from this attempt.
+                        completed.update(failed_models=failed, cooldown_seconds=cooldown, provider=source, free_only=True)
+                        yield completed
+                        return
+                    if not last.recoverable:
+                        raise last
+                    # Retry temporary 429s once, with jitter and Retry-After. A
+                    # daily/account allowance or auth failure needs another pool.
+                    delay = last.retry_after_seconds or 2
+                    if last.status == 429 and last.code != "upstream_quota" and retry == 0 and attempts < MAX_ATTEMPTS and delay <= MAX_RETRY_WAIT and delay + 2 < self.remaining():
+                        await self.capacity.cooldown(source, None if last.scope == "provider" else model["id"], delay)
+                        yield {"type": "model", "model": model["id"], "retry": True,
+                               "notice": f"Model is busy. Retrying in {delay}s…"}
+                        await self.sleep(delay + random.uniform(.05, .5))
+                        continue
+                    if model["id"] not in failed:
+                        failed.append(model["id"])
+                    cooldown = max(cooldown, last.retry_after_seconds or 0)
+                    provider_wide = last.scope == "provider"
+                    await self.capacity.cooldown(source, None if provider_wide else model["id"],
+                                                 last.retry_after_seconds or (60 if provider_wide else COOLDOWN_SECONDS))
+                    if provider_wide:
+                        blocked.add(source)
+                    if not auto:
+                        last.message += " Your selected model is unchanged. Use Auto for automatic recovery."
+                        raise last
+                    if provider_wide and not any(m.get("source", "openrouter") not in blocked for m in candidates):
+                        raise last
                     yield {"type": "model", "model": model["id"], "retry": True,
-                           "notice": f"{model['id']} failed. Trying another free model…",
-                           "failed_models": failed.copy(), "cooldown_seconds": cooldown}
-            raise Failure(503, f"Automatic recovery stopped after {attempts} model attempt(s). No working free model was found. Try again later.",
-                          code="recovery_exhausted", recoverable=False) if attempts else last
+                           "notice": "Trying another available free model…", "failed_models": failed.copy(), "cooldown_seconds": cooldown}
+                    break
+            if shortest_wait is not None:
+                last = Failure(429, "Bailout's free model capacity is busy. Please retry after the indicated delay. No paid fallback was used.", code="free_capacity_exhausted", recoverable=False)
+                last.retry_after_seconds = shortest_wait
+                raise last
+            if last.scope == "provider" or not attempts:
+                raise last
+            exhausted = Failure(503, f"No free route completed after {attempts} attempt(s). Please try again later. No paid fallback was used.", code="recovery_exhausted", recoverable=False)
+            exhausted.retry_after_seconds = max(60, last.retry_after_seconds or 0)
+            raise exhausted
         except Failure as exc:
             exc.failed_models = failed
-            if failed:
-                exc.retry_after_seconds = max(exc.retry_after_seconds or 0, cooldown)
             raise
 
     async def chat(self, data):
@@ -507,8 +648,8 @@ class Router:
                     frame = json.loads(payload, parse_float=Decimal)
                     if frame.get("error"):
                         raise upstream_failure(502, frame)
-                    if frame.get("usage"):
-                        usage = frame["usage"]
+                    if frame.get("usage") or frame.get("x_groq", {}).get("usage"):
+                        usage = frame.get("usage") or frame["x_groq"]["usage"]
                         if usage.get("cost") is not None and not zero(usage["cost"]):
                             raise Failure(502, "Unexpected upstream cost. Stopped; investigate the provider.", code="unexpected_cost", recoverable=False)
                     for choice in frame.get("choices", [])[:1]:
@@ -551,7 +692,7 @@ class Router:
                 message["reasoning_details"] = list(reasoning.values())
             result = {"choices": [{"message": message, "finish_reason": finish}], "usage": usage}
             checked = check_message(result)
-            yield {"type": "done", "model": model, "message": checked, "usage": {"cost": 0 if usage.get("cost") is not None else None}, "checked_at": now()}
+            yield {"type": "done", "model": model, "message": checked, "usage": {"cost": 0 if usage.get("cost") is not None else None}, "checked_at": now(), "tokens": usage.get("total_tokens")}
         finally:
             try:
                 await response.close()

@@ -60,7 +60,7 @@ pub fn welcome(version: &str, model: &str) {
     );
     eprintln!(
         "  {}\n",
-        dim("/shell local terminal   /model choose a model   /help")
+        dim("/shell local terminal   /new fresh conversation   /help")
     );
 }
 

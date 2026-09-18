@@ -42,7 +42,7 @@ $ bailout
 
   › auto · free models · full access
   Fresh machine? Broken setup? Tell me what needs to work.
-  /shell local terminal   /model choose a model   /help
+  /shell local terminal   /new fresh conversation   /help
 
   › this is a fresh Ubuntu VM. help me set up gh and OpenCode
 ```
@@ -89,10 +89,6 @@ whenever you need it again.
 
 | In a session | Action |
 | --- | --- |
-| `/model` | Pick a currently available free model |
-| `/models` | List free models and live provider health |
-| `/model auto` | Return to automatic selection |
-| `/model vendor/model:free` | Pin a free model |
 | `/shell` | Open local Bash for private or interactive setup; `exit` returns |
 | `/last` | Expand the last command's captured output |
 | `/new` | Start a fresh conversation |
@@ -107,7 +103,7 @@ Each Bash call starts a fresh shell in the session directory unless `workdir` is
 specified. Shell state does not persist between calls. Ordinary commands default
 to a two-minute timeout; interactive commands default to ten minutes. Models can
 request up to thirty minutes. `--max-steps N` changes the default 50 model steps.
-`--model ID` and `BAILOUT_MODEL` select a model. `NO_COLOR=1` disables colors.
+Routing is automatic. `NO_COLOR=1` disables colors.
 
 Bailout's Bash calls skip shell startup files, and its curl transport ignores
 `.curlrc`, so those customizations do not have to work before bailout can help.
@@ -126,8 +122,9 @@ For **every model request**, including subsequent agent steps and fallback attem
    `require_parameters: true`, and a hard zero `max_price` for prompt, completion,
    request, and image charges. This cap also covers the gap between checking and sending.
 4. Auto recovers from provider failures, timeouts, broken streams and invalid responses
-   with at most three independently checked free models within 120 seconds.
-   An explicitly selected model stays pinned. No paid model fallback exists.
+   with at most four metered attempts within 120 seconds. Temporary 429s get one
+   delayed retry before switching. The new terminal uses Auto only; legacy pinned
+   API requests stay pinned. No paid inference fallback exists.
 5. Reject arbitrary routing overrides, provider keys, plugins, multimodal content,
    and tools other than Bash. Audit returned costs and reject unexpected nonzero costs.
 
@@ -143,16 +140,23 @@ The list includes the score and reasons so the preference is inspectable and rep
 “Available” means the public provider metadata passes these checks; it does not
 guarantee the shared account can complete a request.
 
-Auto remembers the working model for the terminal session and avoids failed models
-for five minutes (longer if the provider asks). Each attempt checks prices again.
-Recovery preserves completed Bash results and never replays those commands. Partial
-tool calls are discarded. The terminal announces model recovery; after the attempt
-or time limit it stops with an explanation. Account quotas, access/content policies,
-unknown pricing and the hosting cutoff stop recovery immediately. No session IDs,
-prompt logs or additional telemetry are introduced. See [recovery and the API protocol](docs/model-recovery.md).
+Auto remembers the working model for the terminal session and avoids failed routes.
+The backend shares cooldowns across users and reserves request/token capacity for
+every attempt, including retries. Recovery preserves completed Bash results and
+never replays commands. Partial tool calls are discarded. A known account quota
+can use a separately enabled free provider; policy refusals and the hosting cutoff
+stop recovery. No prompt logs or installation IDs are introduced.
+See [recovery and the API protocol](docs/model-recovery.md).
+
+An optional Groq adapter supports a separately verified **Free organization with
+billing disabled**. Its key stays on the server, and the route is disabled unless
+the operator explicitly enables it. This is free account-tier access, not a claim
+that Groq's models have zero list prices. The current enabled provider pools and
+configured quotas are listed in [/v1/status](https://api.bailout.dev/v1/status).
+See [operator setup](docs/service-limits.md#direct-free-provider-setup).
 
 Free capacity is **shared and best effort**. OpenRouter's account quota and provider
-availability still apply. HTTP 429 means wait or choose another available free model;
+availability still apply. A final HTTP 429 means wait for the indicated capacity reset;
 the app never pays to bypass it. The public gateway enforces 30 requests/minute, 300/hour and 1,000/day per IP,
 plus a globally shared allowance. IPv6 /64s and users behind a NAT share limits.
 At the hosting cutoff, HTTP 503 `budget_exhausted` explains when capacity returns;
@@ -165,9 +169,10 @@ Source contracts: [OpenRouter provider routing](https://openrouter.ai/docs/guide
 ## Privacy
 
 Prompts, model-selected file contents, and captured Bash output are sent through the hosted
-Worker to OpenRouter and its selected inference provider. Provider data policies apply;
+Worker to the selected configured provider (OpenRouter and its upstream provider,
+or Groq when explicitly enabled). Provider data policies apply;
 free does not mean zero data retention. The Worker does not store conversations or
-log request bodies. The gateway retains short-lived daily IP hashes and aggregate quota counters; see [retention details](docs/service-limits.md). Worker observability is disabled. Do not include credentials in
+log request bodies. The gateway retains short-lived daily IP hashes, quota reservations and cooldowns; see [retention details](docs/service-limits.md). Worker observability is disabled. Do not include credentials in
 prompts or ask the agent to read secret files.
 
 The homepage publishes aggregate download and model-request totals. Downloads
@@ -213,7 +218,7 @@ a SQLite Durable Object reserves capacity atomically before forwarding requests.
 
 The smoke test drives a real controlling terminal. It verifies Ctrl-C as a keypress
 while editing, waiting on a model, running a child process, and at the empty prompt,
-plus history, multiline input, model selection, local interactive authentication
+plus history, multiline input, Auto routing, local interactive authentication
 without credential capture, shell handoff, uninstall, and recovery after interruption.
 
 CI runs the tests and real binary smoke checks on all three supported platforms.
@@ -247,6 +252,7 @@ Use Python 3.13+, uv 0.12.3+, and Node (for Wrangler). Choose your own Worker na
 in `api/wrangler.jsonc` before deploying. Keep Python private. In
 `worker/gateway.wrangler.jsonc`, choose your gateway name and domain and point its
 `API` binding at your Python Worker. Keep workers.dev and preview URLs disabled.
+Bind the Python Worker’s `CAPACITY` namespace to `BudgetGuard` in that gateway.
 Review [the budget policy and operating instructions](docs/service-limits.md).
 
 The Python API needs **Workers Paid** on Cloudflare. Its JSON processing and

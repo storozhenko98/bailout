@@ -13,8 +13,11 @@ it into a permanent workspace, account system, or replacement for the user's age
 - macOS ARM64, Linux x64, and Linux ARM64 only. Native release binaries <6,000,000 bytes.
 - One model tool: Bash. Full auto by default. No dependency on Git, Node, Python,
   another agent, or a local API key to get started.
-- Free OpenRouter models only. Recheck model and endpoint prices before every
-  inference, including fallback. Unknown pricing fails closed; keep zero-price caps.
+- Free inference only. OpenRouter routes require fresh zero model/endpoint prices
+  before every inference, including retries; unknown pricing fails closed and
+  zero-price caps remain mandatory. Direct providers require a verified Free
+  account with billing disabled. Never enable paid fallback or automatic top-up.
+  Reserve shared provider request/token quotas before every upstream attempt.
 - Keep sign-in and credential entry in interactive terminal handoffs, outside the
   model conversation. Do not capture their terminal input or output.
 - Uninstall removes only the bailout binary. Never delete the user's installed

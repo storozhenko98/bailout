@@ -204,58 +204,6 @@ fn execute_observed(
     })
 }
 
-fn api(base: &str, path: &str, body: Option<Value>) -> Result<Value> {
-    let mut cmd = Command::new("curl");
-    // -q first ignores ~/.curlrc; no shell interpolation, redirects, or embedded key.
-    cmd.args([
-        "-q",
-        "--silent",
-        "--show-error",
-        "--connect-timeout",
-        "15",
-        "--max-time",
-        "180",
-        "--max-filesize",
-        "2000000",
-        "--write-out",
-        "\n%{http_code}",
-        "--header",
-        "Accept: application/json",
-    ]);
-    let input = body.map(|body| {
-        cmd.args([
-            "--header",
-            "Content-Type: application/json",
-            "--data-binary",
-            "@-",
-        ]);
-        body.to_string().into_bytes()
-    });
-    cmd.arg(format!("{}{path}", base.trim_end_matches('/')));
-    let run = execute(cmd, input, Duration::from_secs(185), false, 2_000_010)?;
-    if run.timed_out {
-        return Err("Request timed out.".into());
-    }
-    if run.code != 0 || run.truncated {
-        return Err("Network request failed or response exceeded 2 MB.".into());
-    }
-    let (body, code) = run
-        .output
-        .rsplit_once('\n')
-        .ok_or("Invalid HTTP response")?;
-    let result: Value = serde_json::from_str(body)
-        .map_err(|_| format!("Invalid server response (HTTP {code})."))?;
-    if code != "200" {
-        return Err(result["error"]
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                format!("Server request failed (HTTP {code}). Try again shortly.")
-            }));
-    }
-    Ok(result)
-}
-
 fn stream_chat(base: &str, payload: Value, routing: &mut routing::Routing) -> Result<Value> {
     let mut cmd = Command::new("curl");
     cmd.args([
@@ -432,6 +380,7 @@ fn system() -> Value {
         "You are bailout, a temporary setup and recovery harness. Help bootstrap a fresh \
         Mac or Linux machine, or repair the user's main coding tools so they can get back to work. \
         Inspect the OS, installed tools, and relevant configuration before making changes. \
+        Combine related checks in one Bash call and avoid repeating inspections. \
         Back up configuration before repairing it, preserve working setup, and prefer official install sources. \
         For sign-in, sudo, or secret entry, use bash with interactive=true so the user interacts directly \
         with the command. Never ask for a password, token, or private key in chat; never print secrets \
@@ -600,69 +549,13 @@ fn turn(
     ))
 }
 
-fn show_models(base: &str) -> Result<Vec<String>> {
-    let waiting = ui::Spinner::new("Checking free models");
-    let result = api(base, "/v1/models", None)?;
-    drop(waiting);
-    let models = result["models"].as_array().ok_or("Invalid model list")?;
-    eprintln!("\n  {}\n", ui::paint("Choose a model", "1"));
-    println!(
-        "  {}  {:<38} {}",
-        ui::accent("0"),
-        "Auto",
-        ui::dim("recommended")
-    );
-    let mut ids = Vec::new();
-    for m in models {
-        let id = m["id"].as_str().ok_or("Missing model id")?;
-        if !id.ends_with(":free") {
-            continue;
-        }
-        ids.push(id.to_string());
-        let name = m["name"].as_str().unwrap_or(id).trim_end_matches(" (free)");
-        let status = if m["available"] == true {
-            "available"
-        } else {
-            "unavailable"
-        };
-        println!(
-            "  {:>2}  {:<38} {}",
-            ids.len(),
-            clean(name),
-            ui::dim(status)
-        );
-    }
-    eprintln!();
-    ui::note("Free models only. Enter a number or a model ID; Ctrl-C returns.");
-    Ok(ids)
-}
-
-fn select_model(selected: &str, ids: &[String]) -> Result<String> {
-    if selected == "0" || selected == "auto" {
-        return Ok("auto".into());
-    }
-    if let Ok(index) = selected.parse::<usize>() {
-        return ids
-            .get(index.saturating_sub(1))
-            .cloned()
-            .ok_or("Choose a number from the list.".into());
-    }
-    if selected.ends_with(":free") {
-        return Ok(selected.into());
-    }
-    Err("Choose auto, a number from /models, or a :free model ID.".into())
-}
-
 fn help() {
     println!(
         "bailout {VERSION} — the harness meant to be deleted.\n\n\
-Usage: bailout [--model MODEL] [--max-steps N] [PROMPT]\n\
-       bailout models\n\n\
+Usage: bailout [--max-steps N] [PROMPT]\n\
+\n\
 Bootstrap a fresh machine or repair your usual coding tools.\n\
 Bash commands run automatically. No local API key or agent setup needed.\n\n\
-  /model          choose a free model\n\
-  /model ID       select a model directly (or auto)\n\
-  /models         list available free models\n\
   /last           show the last command's full captured output\n\
   /shell          local Bash for sign-in or private setup; exit to return\n\
   /new            start a fresh conversation\n\
@@ -673,17 +566,17 @@ Bash commands run automatically. No local API key or agent setup needed.\n\n\
   Up / Down       browse prompt history\n\
   Ctrl-J          insert a newline (also Alt-Enter)\n\
   Ctrl-A / E      move to the start / end of the line\n\n\
-Options: --model ID, --max-steps N (default 50), --help, --version\n\
+Options: --max-steps N (default 50), --help, --version\n\
 Done with it? Run bailout uninstall to remove only this binary.\n\
 Updates are checked automatically at startup. Run bailout update to check now.\n\
-Environment: BAILOUT_API_URL, BAILOUT_MODEL, BAILOUT_NO_UPDATE=1, NO_COLOR\n\
+Environment: BAILOUT_API_URL, BAILOUT_NO_UPDATE=1, NO_COLOR\n\
 Bash calls start in the session directory; shell variables and cd do not persist."
     );
 }
 
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
-    let mut model = env::var("BAILOUT_MODEL").unwrap_or_else(|_| "auto".into());
+    let model = String::from("auto");
     let base = env::var("BAILOUT_API_URL").unwrap_or_else(|_| DEFAULT_API.into());
     if !(base.starts_with("https://")
         || base.starts_with("http://127.0.0.1:")
@@ -705,7 +598,11 @@ fn run() -> Result<()> {
             }
             "--model" | "-m" => {
                 i += 1;
-                model = args.get(i).ok_or("--model needs a value")?.clone();
+                if args.get(i).ok_or("--model needs a value")? != "auto" {
+                    return Err(
+                        "Bailout now routes automatically. Remove --model and run again.".into(),
+                    );
+                }
             }
             "--max-steps" => {
                 i += 1;
@@ -724,7 +621,7 @@ fn run() -> Result<()> {
             }
             "models" if args.len() == 1 => {
                 update::startup()?;
-                show_models(&base)?;
+                ui::note("Auto routing chooses an available free model. No model setup needed.");
                 return Ok(());
             }
             "update" if args.len() == 1 => return update::update(true),
@@ -734,7 +631,6 @@ fn run() -> Result<()> {
         }
         i += 1;
     }
-    model = select_model(&model, &[])?;
     update::startup()?;
     let mut messages = vec![system()];
     let mut routing = routing::Routing::default();
@@ -768,7 +664,6 @@ fn run() -> Result<()> {
     }
     ui::welcome(VERSION, &model);
     let mut editor = ui::editor()?;
-    let mut ids = Vec::new();
     loop {
         CANCELLED.store(false, Ordering::SeqCst);
         let line = match ui::read(&mut editor, false)? {
@@ -799,39 +694,11 @@ fn run() -> Result<()> {
                 }
             }
             "/model" | "/models" => {
-                match show_models(&base) {
-                    Ok(list) => ids = list,
-                    Err(e) => {
-                        ui::error(&e);
-                        continue;
-                    }
-                }
-                if line == "/model" {
-                    if let ui::Input::Text(choice) = ui::read(&mut editor, true)? {
-                        match select_model(choice.trim(), &ids) {
-                            Ok(value) => {
-                                if model != value {
-                                    clear_reasoning(&mut messages);
-                                }
-                                model = value;
-                                ui::note(&format!("Model: {model}"));
-                            }
-                            Err(e) => ui::error(&e),
-                        }
-                    }
-                    install_signals();
-                }
+                ui::note("Auto routing chooses an available free model. No model setup needed.")
             }
-            _ if line.starts_with("/model ") => match select_model(line[7..].trim(), &ids) {
-                Ok(value) => {
-                    if model != value {
-                        clear_reasoning(&mut messages);
-                    }
-                    model = value;
-                    ui::note(&format!("Model: {model}"));
-                }
-                Err(e) => ui::error(&e),
-            },
+            _ if line.starts_with("/model ") => {
+                ui::note("Bailout uses Auto routing. Available free models are selected for you.")
+            }
             _ if line.starts_with('/') => ui::note("Unknown command. Use /help."),
             _ => {
                 println!();

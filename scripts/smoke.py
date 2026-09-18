@@ -114,7 +114,7 @@ class Terminal:
         self.closed = False
         # The welcome banner also contains "  › ". Wait past it so tests send
         # input to the editor, not to startup before cancellation is reset.
-        self.expect('/shell local terminal   /model choose a model   /help')
+        self.expect('/shell local terminal   /new fresh conversation   /help')
     def send(self, text): os.write(self.fd, text.encode() if isinstance(text, str) else text)
     def expect(self, text, timeout=10):
         needle = text.encode()
@@ -180,7 +180,7 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
     broken = run('broken stream')
     assert broken.returncode == 1 and not pathlib.Path(folder, 'hello.txt').exists()
     mismatch = subprocess.run([binary, '--model', 'test/pinned:free', 'pinned mismatch'], cwd=folder, env=env, capture_output=True, text=True, timeout=15)
-    assert mismatch.returncode == 1 and 'changed the pinned model' in mismatch.stderr
+    assert mismatch.returncode == 1 and 'routes automatically' in mismatch.stderr
     assert not pathlib.Path(folder, 'recovery-count.txt').exists()
     result = run('create hello.txt')
     assert result.returncode == 0, result.stderr
@@ -230,9 +230,7 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
         terminal.prompt()
         assert calls[-1]['messages'][-1]['content'] == 'one\ntwo'
         terminal.send('/model\r')
-        terminal.expect('model › ')
-        terminal.send('0\r')
-        terminal.expect('Model: auto')
+        terminal.expect('Auto routing chooses an available free model.')
         terminal.prompt()
         terminal.send('local login\r')
         terminal.expect('Local token: ')
@@ -298,4 +296,4 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
     assert removed.returncode == 0 and not disposable.exists()
     assert retained.read_text() == 'keep this'
 server.shutdown()
-print('PASS: minimal fresh-machine environment, streamed chat without Bash, file edit, partial stream rejection, real Ctrl-C while editing/model/Bash/idle, history, Unicode, multiline, model picker, local login without credential capture, interactive cancellation, local shell, uninstall, recovery')
+print('PASS: minimal fresh-machine environment, streamed chat without Bash, file edit, partial stream rejection, real Ctrl-C while editing/model/Bash/idle, history, Unicode, multiline, Auto routing, local login without credential capture, interactive cancellation, local shell, uninstall, recovery')

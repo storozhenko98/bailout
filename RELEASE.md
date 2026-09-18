@@ -1,16 +1,16 @@
-# bailout v0.5.0
+# bailout v0.6.0
 
-The harness meant to be deleted. Bootstrap a fresh machine or repair your broken
-coding setup, then hand back to your usual tools.
+Automatic routing for a fresh machine or a broken coding setup.
 
-- Auto recovers from provider failures, timeouts, broken streams and invalid
-  responses, trying up to three verified-free models within 120 seconds.
-- Successful models stick for the terminal session. Failed models get a temporary
-  cooldown. The terminal announces recovery and preserves completed Bash work.
-- Explicit model selections stay pinned. Account limits, policy blocks, pricing
-  uncertainty and the hosting cutoff stop recovery with a clear error.
-- Every attempt still verifies free pricing; no paid fallback, credentials or
-  telemetry are added to the harness.
+- Auto-only terminal: no model picker or provider setup before getting help.
+- Temporary 429s retry once with delay and jitter; failed routes get shared cooldowns.
+- Every inference attempt, including retries, reserves shared request/token capacity.
+  Concurrency limits keep bursts from flooding one model. Recovery is bounded to
+  four attempts and 120 seconds, with clear capacity errors.
+- Optional Groq Free adapter adds an independent provider pool when explicitly
+  configured on a Free account with billing disabled. No paid fallback.
+- Completed Bash work is preserved across recovery; partial tool calls never run.
+- Startup updates, interactive secret-entry handoffs and safe uninstall remain.
 
 Restart bailout v0.4+ to update automatically, or install:
 
