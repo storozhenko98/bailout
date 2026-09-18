@@ -37,6 +37,23 @@ def api(base, path, token, body=None, timeout=140):
         return response.read()
 
 
+def discover_candidates(base, token, requested=None):
+    # A transient metadata failure may omit one provider while the rest of the
+    # catalog succeeds. Retry fresh discovery; never invent or cache eligibility.
+    wanted = set(requested or [])
+    for attempt in range(3):
+        catalog = json.loads(api(base, "/internal/bench/catalog", token))
+        found = {model["id"] for model in catalog["candidates"]}
+        missing = wanted - found
+        if found and not missing:
+            return catalog
+        if attempt < 2:
+            print(json.dumps({"discovery_retry": attempt + 1, "missing_candidates": sorted(missing)}), flush=True)
+            time.sleep(2 * (attempt + 1))
+    print(json.dumps({"discovery_unavailable": True, "missing_candidates": sorted(missing)}), flush=True)
+    return catalog
+
+
 class Proxy(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
@@ -248,7 +265,7 @@ def main():
         parser.error("BAILOUT_BENCHMARK_TOKEN must be provisioned")
     if not args.skip_build:
         subprocess.run(["docker", "build", "-t", IMAGE, "-f", "bench/Dockerfile", "."], cwd=ROOT, check=True)
-    catalog = json.loads(api(args.api, "/internal/bench/catalog", token))
+    catalog = discover_candidates(args.api, token, args.models)
     previous = {m["id"]: m for m in catalog["snapshot"]["models"]}
     candidates = catalog["candidates"]
     if args.models:

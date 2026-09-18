@@ -82,6 +82,9 @@ until qualified.
 `.github/workflows/qualify-models.yml` runs daily at 09:17 UTC and supports manual
 dispatch. Manual runs accept up to two exact candidate IDs for bootstrap or
 regression checks; blank input uses the same rotation as the scheduled job.
+If discovery is empty or a manually requested model is missing, the evaluator
+retries fresh discovery twice with short backoff and reports any still-missing IDs.
+It never substitutes cached eligibility for a failed pricing check.
 It evaluates up to two models with at most 80 inference API submissions per model
 (160 per workflow), including retries and capacity refusals. Each candidate has
 its own allowance so a throttled provider cannot starve the next model. The

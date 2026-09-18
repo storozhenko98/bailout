@@ -18,6 +18,26 @@ NOW = datetime.now(timezone.utc).isoformat()
 
 
 class ScoringTests(unittest.TestCase):
+    def test_discovery_retries_temporarily_missing_requested_provider(self):
+        other = {**MODEL, 'id': 'other/model:free'}
+        partial = {'candidates': [other], 'snapshot': {'models': []}}
+        complete = {'candidates': [other, MODEL], 'snapshot': {'models': []}}
+        with patch.object(run, 'api', side_effect=[json.dumps(c).encode() for c in [partial, complete]]) as upstream, \
+             patch.object(run.time, 'sleep') as sleep, patch('builtins.print'):
+            result = run.discover_candidates('https://unused.test', 'secret', [MODEL['id']])
+        self.assertEqual(result, complete)
+        self.assertEqual(upstream.call_count, 2)
+        sleep.assert_called_once_with(2)
+
+    def test_discovery_is_bounded_and_never_reuses_disappeared_candidates(self):
+        partial = {'candidates': [MODEL], 'snapshot': {'models': []}}
+        empty = {'candidates': [], 'snapshot': {'models': []}}
+        with patch.object(run, 'api', side_effect=[json.dumps(c).encode() for c in [partial, empty, empty]]) as upstream, \
+             patch.object(run.time, 'sleep'), patch('builtins.print'):
+            result = run.discover_candidates('https://unused.test', 'secret', [MODEL['id'], 'missing/model:free'])
+        self.assertEqual(result, empty)
+        self.assertEqual(upstream.call_count, 3)
+
     def test_throttled_first_candidate_cannot_spend_the_second_candidates_allowance(self):
         candidates = [{**MODEL, 'id': f'test/{name}:free'} for name in ['a', 'b']]
         calls = []
