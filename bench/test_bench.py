@@ -130,6 +130,7 @@ class ScoringTests(unittest.TestCase):
             result = run.load_progress(path, run.checkpoint_signature())
             self.assertEqual(set(result['models']['a']['tasks']), {'config', 'dependency', 'preserve'})
             self.assertFalse(result['models']['a']['complete'])
+            self.assertTrue(result['models']['a']['corrects_published_run'])
             result['models']['a']['tasks']['path'] = ambiguous
             run.save_json(path, result)
             self.assertIn('path', run.load_progress(path, run.checkpoint_signature())['models']['a']['tasks'])

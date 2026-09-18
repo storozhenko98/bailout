@@ -321,6 +321,7 @@ def load_progress(path, signature):
                             del saved['tasks'][task]
                             removed = True
                     if removed:
+                        saved['corrects_published_run'] = bool(saved.get('complete'))
                         saved['complete'] = False
                 data['outcome_scoring'] = OUTCOME_SCORING
             return data
@@ -412,7 +413,10 @@ def main():
                 save_json(progress_path, progress)
             if result["inconclusive"]:
                 break
-        row = accumulate(model, results, previous.get(model["id"]), datetime.now(timezone.utc).isoformat())
+        # A corrected published suite replaces its old score; its retained
+        # passes are not evidence from a second independent run.
+        prior = None if saved.get('corrects_published_run') else previous.get(model['id'])
+        row = accumulate(model, results, prior, datetime.now(timezone.utc).isoformat())
         if row:
             output.append(row)
             saved['complete'] = len(results) == len(TASKS) and not any(r['inconclusive'] for r in results)
