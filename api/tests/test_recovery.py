@@ -54,6 +54,24 @@ async def test_zai_streamed_business_error_keeps_its_meaning():
     assert caught.value.provider_error_code == '1113'
 
 
+@pytest.mark.parametrize('status', [400, 502])
+def test_groq_generated_tool_failure_can_fall_back_without_echoing_generated_commands(status):
+    failure = policy.upstream_failure(status, {'error': {'type': 'invalid_request_error',
+        'code': 'tool_use_failed', 'failed_generation': 'private model command'}}, 'groq')
+    assert failure.code == 'invalid_tool_response' and failure.recoverable
+    assert failure.scope == 'model' and failure.retry_after_seconds is None
+    assert 'private model' not in json.dumps(failure.payload())
+
+
+async def test_groq_streamed_tool_failure_is_not_misclassified_as_provider_outage():
+    response = Response(None, raw=sse(dict(error=dict(type='invalid_request_error', failed_generation='private command'))))
+    with pytest.raises(Failure) as caught:
+        async for _ in Router(Upstream(), 'test').read_stream('groq/openai/gpt-oss-20b:free', response, 'groq'):
+            pass
+    assert caught.value.code == 'invalid_tool_response'
+    assert caught.value.provider_error_code == 'tool_use_failed'
+
+
 def error(status, **metadata):
     return Response(dict(error=dict(code=status, message="Upstream error", metadata=metadata)), status)
 

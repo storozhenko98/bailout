@@ -83,6 +83,14 @@ def upstream_failure(status, result, source=None):
         metadata = {}
     kind = metadata.get("error_type") or error.get("type")
     code = error.get("code")
+    if source == "groq" and (code == "tool_use_failed" or "failed_generation" in error):
+        # Groq reports model-generated invalid tool calls as request errors,
+        # including inside an otherwise successful HTTP stream. These are model
+        # failures, not bad user input or a temporarily unreachable provider.
+        failure = Failure(502, "The model could not generate a valid Bash call. No commands were run.",
+                          code="invalid_tool_response", recoverable=True)
+        failure.provider_error_code = "tool_use_failed"
+        return failure
     if source == "zai" and re.fullmatch(r"\d{4}", str(code)):
         # ZAI uses HTTP 429 for balance/plan failures as well as overload.
         # Classify its documented business codes without exposing the body.
@@ -705,7 +713,10 @@ class Router:
                         continue
                     frame = json.loads(payload, parse_float=Decimal)
                     if frame.get("error"):
-                        raise upstream_failure(502, frame, source)
+                        failure = upstream_failure(502, frame, source)
+                        if self.evaluation:
+                            failure.diagnostic = {"stream_error": True}
+                        raise failure
                     if frame.get("usage") or frame.get("x_groq", {}).get("usage"):
                         usage = frame.get("usage") or frame["x_groq"]["usage"]
                         if usage.get("cost") is not None and not zero(usage["cost"]):
