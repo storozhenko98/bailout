@@ -26,10 +26,12 @@ These are gateway admissions, not promised model calls. Separately, the provider
 ledger permits 18 OpenRouter inference attempts per rolling minute and 1,000 per
 rolling 24 hours. Retries count. Upstream account limits or other applications on
 the same account can reduce the available capacity. When explicitly enabled on a
-verified Free organization, the Groq pool is capped conservatively at 28 attempts
-per minute, 950 per 24 hours, 7,800 tokens per minute and 190,000 per 24 hours.
-Token quotas often bind before request counts. `GET /v1/status` lists configured
-provider limits; a provider adapter being in the source does not mean it is live.
+verified Free organization, Groq defaults to 28 attempts per minute, 950 per
+24 hours, 7,800 tokens per minute and 190,000 per 24 hours. Verified model-specific
+quotas meter those models independently, as described below. Token quotas often
+bind before request counts. `GET /v1/status` lists configured provider defaults;
+it does not sum independent model pools or promise current upstream capacity.
+A provider adapter being in the source does not mean it is live.
 Each provider allows at most eight concurrent calls and each model at most two
 (one for ZAI free routes).
 A refusal never enables paid inference.
