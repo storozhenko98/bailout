@@ -1,8 +1,8 @@
 # Model qualification and context-aware routing
 
-This describes the new router in this checkout. Deployment and the first genuine
-qualification runs are required before activating it. No fabricated bootstrap
-scores or third-party ranking dataset is bundled.
+Version 0.7 uses this router in the hosted service. Only models with genuine passing
+qualification evidence serve production requests. No fabricated bootstrap scores
+or third-party ranking dataset is bundled.
 
 ## Context
 

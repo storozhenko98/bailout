@@ -132,14 +132,14 @@ The $1 key limit alone would still permit paid requests. The checks and upstream
 zero-price cap are what enforce this app's free-only policy. Like any client, the
 app depends on OpenRouter honoring its published prices and routing contract.
 
-The new router qualifies models using Bailout's own setup-and-repair benchmark.
+The router qualifies models using Bailout's own setup-and-repair benchmark.
 Models need repeated passing runs, native Bash calls, and no critical failures.
 Unrecognized models remain outside production. Rankings combine measured task
 success with aggregate route health; context length, model names and marketing
 copy do not earn intelligence points. The nightly workflow publishes versioned
 results atomically, retaining the last valid snapshot on failure.
 See [qualification, context handling and staged rollout](docs/model-qualification.md).
-This checkout's new routing policy needs genuine qualification results before activation.
+The hosted service admits only models with genuine passing qualification evidence.
 
 Auto remembers the working model for the terminal session and avoids failed routes.
 The backend shares cooldowns across users and reserves request/token capacity for

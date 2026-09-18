@@ -7,13 +7,13 @@
   "preview_urls": false,
   "observability": { "enabled": false },
   "limits": { "cpu_ms": 50 },
-  "vars": { "BUDGET_ALLOWANCE_MICRO_USD": "35000000", "SERVICE_PAUSED": "false" },
+  "vars": { "BUDGET_ALLOWANCE_MICRO_USD": "35000000", "SERVICE_PAUSED": "false", "PROVIDER_POOL": "openrouter,groq,mistral,zai,vercel" },
   "ratelimits": [
     { "name": "EDGE_IP_LIMIT", "namespace_id": "1005", "simple": { "limit": 60, "period": 60 } },
     { "name": "EDGE_GLOBAL_LIMIT", "namespace_id": "1006", "simple": { "limit": 240, "period": 60 } }
   ],
   "durable_objects": { "bindings": [{ "name": "BUDGET", "class_name": "BudgetGuard" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BudgetGuard"] }],
-  "services": [{ "binding": "API", "service": "api" }, { "binding": "EVALUATOR", "service": "bailout-evaluator" }],
+  "services": [{ "binding": "API", "service": "api" }],
   "routes": [{ "pattern": "api.bailout.dev", "custom_domain": true }]
 }
