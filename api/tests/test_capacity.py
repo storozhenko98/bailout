@@ -250,6 +250,26 @@ async def test_local_quota_uses_other_provider_without_sending_rejected_attempt(
     assert events[-1]['model'] == GROQ_MODEL and not stub.inferences()
 
 
+@pytest.mark.parametrize('selected', ['auto', 'test/a:free'])
+async def test_request_larger_than_full_token_bucket_does_not_retry_forever(selected):
+    meter = Meter(dict(openrouter=dict(ok=False, code='route_context_capacity', scope='provider', retry_after_seconds=0)))
+    stub = Sequence([])
+    events = await stream(Router(stub, 'test', capacity=meter), data(selected, stream=True))
+    assert events[-1]['code'] == 'context_exhausted'
+    assert 'retry_after_seconds' not in events[-1]
+    assert not stub.inferences()
+
+
+async def test_oversized_free_quota_uses_larger_pool_and_explains_switch_without_losing_history():
+    meter = Meter(dict(openrouter=dict(ok=False, code='route_context_capacity', scope='provider', retry_after_seconds=0)))
+    stub = Multiple([])
+    events = await stream(Router(stub, 'test', capacity=meter, provider_keys={'groq': 'groq-test'}, accounts=free_accounts()), data(stream=True))
+    assert events[-1]['type'] == 'done' and events[-1]['model'] == GROQ_MODEL
+    assert any(e.get('reason') == 'provider_token_limit' and 'preserved' in e['notice'] for e in events)
+    assert not stub.inferences()
+    assert json.loads(stub.groq_calls[-1][1]['body'])['messages'] == data()['messages']
+
+
 async def test_last_pool_can_wait_briefly_after_other_candidates_cannot_fit_context():
     waits = []
     class BrieflyBusy(Meter):

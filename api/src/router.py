@@ -431,6 +431,7 @@ class Router:
         last = Failure(503, "No free model capacity is available. Try again later.", code="free_capacity_exhausted", recoverable=False)
         shortest_wait = None
         context_skipped = []
+        quota_skipped = []
         notices = []
         try:
             for index, candidate in enumerate(candidates):
@@ -482,6 +483,14 @@ class Router:
                     tokens = quota_tokens(messages, [BASH_TOOL], fit["output_tokens"])
                     permit = await self.capacity.reserve(source, model["id"], tokens, **({"quota": model["quota"]} if model.get("quota") else {}))
                     if not permit["ok"]:
+                        if permit.get("code") == "route_context_capacity":
+                            # Waiting cannot make a request fit a completely
+                            # empty token bucket. Preserve history and use a
+                            # larger independent free allowance in Auto.
+                            quota_skipped.append(model["id"])
+                            if not auto:
+                                raise Failure(400, "This conversation exceeds the selected provider's free per-request token allowance. Use Auto for a larger free route or /new.", code="context_exhausted", recoverable=False)
+                            break
                         delay = permit.get("retry_after_seconds", 0)
                         if delay > 0:
                             shortest_wait = delay if shortest_wait is None else min(shortest_wait, delay)
@@ -508,6 +517,9 @@ class Router:
                                 "context": {k: v for k, v in fit.items() if k != "endpoints"}}
                     if context_skipped:
                         selected.update(retry=True, reason="context_limit", notice=f"Conversation is near the context limit of {context_skipped[-1]}. Switching to {model['id']} with more room; your conversation is preserved.")
+                        notices.append(selected["notice"])
+                    elif quota_skipped:
+                        selected.update(retry=True, reason="provider_token_limit", notice=f"Conversation exceeds the free token allowance for {quota_skipped[-1]}. Switching to {model['id']}; your conversation is preserved.")
                         notices.append(selected["notice"])
                     elif data.get("preferred_model") and model["id"] != data["preferred_model"]:
                         selected.update(retry=True, reason="route_change", notice=f"Switching to {model['id']} for available free capacity.")
@@ -622,6 +634,8 @@ class Router:
                     break
             if context_skipped and (attempts == 0 or last.code == "context_exceeded") and shortest_wait is None:
                 raise Failure(400, "No qualified free model currently has enough context room for this conversation. Your history was preserved. Use /new for a fresh task.", code="context_exhausted", recoverable=False)
+            if quota_skipped and attempts == 0 and shortest_wait is None:
+                raise Failure(400, "This conversation exceeds every available provider's free token allowance. Waiting will not make it fit. Your history was preserved. Use /new for a smaller task.", code="context_exhausted", recoverable=False)
             if shortest_wait is not None:
                 last = Failure(429, "Bailout's free model capacity is busy. No paid fallback was used.", code="free_capacity_exhausted", recoverable=False)
                 last.retry_after_seconds = shortest_wait

@@ -80,6 +80,11 @@ Non-streaming responses include `notices` too. If no qualified free route fits,
 `context_exhausted` preserves history and asks the user to start a new task. The
 separate transport ceiling is 4 MB and 2,048 messages.
 
+A provider's free token quota can be smaller than its model's context window.
+If the request cannot fit even an empty token bucket, Auto tries another route
+with `reason: "provider_token_limit"` and a notice, preserving the conversation.
+If no route fits, it returns `context_exhausted`; waiting cannot fix that request.
+
 ## Client protocol
 
 `POST /v1/chat` accepts `model`, `messages`, `stream`, and optional Auto hints:
