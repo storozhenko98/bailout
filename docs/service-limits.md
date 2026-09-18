@@ -189,13 +189,29 @@ an assertion that the providers offer an API to detect account upgrades. Disable
 the route before changing account billing. Use an isolated free account for Bailout.
 Add a similarly verified `mistral` record to enable its free account tier.
 
-When the account dashboard confirms model-specific quotas, add `limits_by_model`
+When the account dashboard or live quota headers plus official documentation
+confirm model-specific quotas, add `limits_by_model`
 inside that account record, keyed by the provider's exact model ID. Each entry has
 positive integer `rpm`, `rpd`, `tpm` and `tpd`, conservatively below the verified
 limits. The shared Durable Object then meters each model independently; account
 cooldowns and the eight-call provider concurrency limit still apply. Without that
 verification, quotas stay in the conservative shared provider pool. Never add
 keys/accounts to evade an upstream account's limits.
+
+On 2026-09-18, Groq's live headers confirmed independent remaining-request counts
+for `openai/gpt-oss-120b` and `qwen/qwen3.8-27b`, each with 1,000 RPD and 8,000 TPM.
+The [official Free-plan table](https://console.groq.com/docs/rate-limits) also lists
+30 RPM and 200,000 TPD for each. Bailout reserves 28 RPM, 950 RPD, 7,800 TPM and
+190,000 TPD per model, retaining existing usage rather than resetting counters.
+
+Vercel's [free-tier throttle is per model](https://vercel.com/docs/ai-gateway/rate-limits).
+A live synthetic burst returned a temporary 429 on its sixth request, with an
+upgrade suggestion mentioning credits; this was not exhausted credit. Bailout
+paces each Vercel model to four requests per rolling minute, still under its
+shared 10 RPM / 900 RPD gate, and respects upstream retry delays. A headerless
+Vercel rate-limit response gets a 60-second model cooldown. A one-time migration
+removes only the known erroneous account cooldown created at 17:01 UTC on
+2026-09-18; it preserves usage and all subsequent cooldowns.
 
 OpenRouter checks all live model and endpoint charges and enforces hard zero price
 caps on every attempt. Z.AI checks its official pricing table before each attempt

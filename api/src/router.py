@@ -130,6 +130,8 @@ def upstream_failure(status, result, source=None):
                           recoverable=True, scope="provider" if global_limit else "model")
         if exhausted:
             failure.retry_after_seconds = 3600
+        elif source == "vercel" and kind == "rate_limit_exceeded":
+            failure.retry_after_seconds = 60
         return failure
     if kind in {"context_length_exceeded", "string_too_long", "payload_too_large"} or code in {"context_length_exceeded", "context_window_exceeded"}:
         return Failure(400, "This model has insufficient context room. Switching to a larger qualified free model…", code="context_exceeded", recoverable=True, scope="request")

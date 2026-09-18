@@ -21,6 +21,17 @@ export class CapacityLedger {
     this.sql.exec('CREATE TABLE IF NOT EXISTS inference_attempts (id TEXT PRIMARY KEY, provider TEXT NOT NULL, started INTEGER NOT NULL, tokens INTEGER NOT NULL, route TEXT NOT NULL, pending INTEGER NOT NULL)');
     this.sql.exec('CREATE INDEX IF NOT EXISTS inference_window ON inference_attempts(provider, started)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS inference_health (route TEXT PRIMARY KEY, until INTEGER NOT NULL)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS capacity_migrations (id TEXT PRIMARY KEY)');
+    this.storage.transactionSync(() => {
+      // Repair the known 2026-09-18 17:01 UTC Vercel throttle: upgrade copy
+      // containing "credits" was mistaken for account exhaustion. Live probes
+      // and the recorded 429 confirmed a temporary per-model rate limit. This
+      // one-time data correction never resets usage or future cooldowns.
+      const id = '2026-09-18-vercel-credit-copy';
+      if ([...this.sql.exec('SELECT id FROM capacity_migrations WHERE id = ?', id)].length) return;
+      this.sql.exec('DELETE FROM inference_health WHERE route = ? AND until >= ? AND until < ?', 'vercel', Date.UTC(2026, 8, 18, 18, 1), Date.UTC(2026, 8, 18, 18, 2));
+      this.sql.exec('INSERT INTO capacity_migrations VALUES (?)', id);
+    });
   }
   benchmark(now = Date.now()) {
     return this.storage.transactionSync(() => {
@@ -53,6 +64,11 @@ export class CapacityLedger {
       if (running.filter(r => r.route === model).length >= modelConcurrency) return { ok: false, code: 'route_busy', scope: 'model', retry_after_seconds: 2 };
       if (running.length >= 8) return { ok: false, code: 'provider_capacity', scope: 'provider', retry_after_seconds: 2 };
       let wait = 0;
+      // Vercel documents per-model free-tier throttling. Live qualification
+      // hit a temporary 429 on the sixth burst request; keep headroom while
+      // retaining the provider-wide daily/minute gates below.
+      const vercelMinute = rows.filter(r => r.route === model && r.started > now - 60000);
+      const modelWait = provider === 'vercel' && vercelMinute.length >= 4 ? vercelMinute[vercelMinute.length - 4].started + 60000 - now : 0;
       for (const [duration, requests, budget] of [[60000, limits.rpm, limits.tpm], [86400000, limits.rpd, limits.tpd]]) {
         const active = rows.filter(r => r.started > now - duration && (!quota || r.route === model));
         let count = active.length, used = active.reduce((n, r) => n + r.tokens, 0);
@@ -63,6 +79,7 @@ export class CapacityLedger {
         }
       }
       if (wait > 0) return { ok: false, code: 'provider_capacity', scope, retry_after_seconds: Math.max(1, Math.ceil(wait / 1000)) };
+      if (modelWait > 0) return { ok: false, code: 'provider_capacity', scope: 'model', retry_after_seconds: Math.max(1, Math.ceil(modelWait / 1000)) };
       const permit = crypto.randomUUID();
       this.sql.exec('INSERT INTO inference_attempts VALUES (?, ?, ?, ?, ?, 1)', permit, provider, now, tokens, model);
       return { ok: true, permit };

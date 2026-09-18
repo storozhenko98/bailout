@@ -36,7 +36,7 @@ def test_vercel_upgrade_copy_does_not_turn_temporary_model_limits_into_account_e
     failure = policy.upstream_failure(429, {'error': {'type': 'rate_limit_exceeded',
         'message': 'Rate limit exceeded. Add credits to increase your rate limits.'}}, 'vercel')
     assert failure.code == 'upstream_rate_limited' and failure.scope == 'model'
-    assert failure.retry_after_seconds is None
+    assert failure.retry_after_seconds == 60
     budget = policy.upstream_failure(402, {'error': {'type': 'quota_for_entity_exceeded'}}, 'vercel')
     assert budget.code == 'upstream_quota' and budget.scope == 'provider'
     exhausted = policy.upstream_failure(429, {'error': {'message': 'Daily model limit reached'}}, 'vercel')

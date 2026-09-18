@@ -83,6 +83,34 @@ test('authenticated evaluations have bounded bootstrap capacity and still consum
   assert.equal(capped.admit(client, 'benchmark', now + 60000).body.code, 'budget_exhausted');
 });
 
+test('Vercel legacy cooldown correction is narrow, durable and preserves quota reservations', () => {
+  const { storage } = ledger();
+  const c = new CapacityLedger(storage);
+  c.reserve('vercel', 'vercel/test/a:free', 0, now);
+  storage.sql.exec('DELETE FROM capacity_migrations'); // Simulate upgrading the old schema.
+  storage.sql.exec('INSERT INTO inference_health VALUES (?, ?)', 'vercel', Date.UTC(2026, 8, 18, 18, 1, 16));
+  c.cooldown('groq', null, 3600, now);
+  const upgraded = new CapacityLedger(storage);
+  assert.equal([...storage.sql.exec('SELECT * FROM inference_health WHERE route = ?', 'vercel')].length, 0);
+  assert.equal([...storage.sql.exec('SELECT * FROM inference_health WHERE route = ?', 'groq')].length, 1);
+  assert.equal([...storage.sql.exec('SELECT * FROM inference_attempts')].length, 1);
+  upgraded.cooldown('vercel', null, 3600, now);
+  new CapacityLedger(storage);
+  assert.equal([...storage.sql.exec('SELECT * FROM inference_health WHERE route = ?', 'vercel')].length, 1);
+});
+
+test('Vercel free model pacing leaves sibling models available and survives a restart', () => {
+  const { storage } = ledger(); const c = new CapacityLedger(storage);
+  for (let i = 0; i < 4; i++) {
+    const permit = c.reserve('vercel', 'vercel/test/a:free', 0, now + i * 1000);
+    assert.equal(permit.ok, true); c.settle(permit.permit, 10);
+  }
+  assert.equal(new CapacityLedger(storage).reserve('vercel', 'vercel/test/a:free', 0, now + 4000).retry_after_seconds, 56);
+  assert.equal(c.reserve('vercel', 'vercel/test/a:free', 0, now + 4000).scope, 'model');
+  assert.equal(c.reserve('vercel', 'vercel/test/b:free', 0, now + 4000).ok, true);
+  assert.equal(c.reserve('vercel', 'vercel/test/a:free', 0, now + 60000).ok, true);
+});
+
 function runtime(allowance, api) {
   return new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'gateway', modules: [{type:'ESModule', path:'gateway.js', contents:buildSync({entryPoints:[fileURLToPath(new URL('../src/gateway.ts', import.meta.url))],bundle:true,write:false,format:'esm',platform:'browser'}).outputFiles[0].text}], compatibilityDate: '2026-09-17',
     bindings: { BUDGET_ALLOWANCE_MICRO_USD: String(allowance), SERVICE_PAUSED: 'false' },

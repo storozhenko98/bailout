@@ -12,6 +12,11 @@ on:
     - cron: '17 9 * * *'
   workflow_dispatch:
     inputs:
+      progress_group:
+        description: 'Checkpoint group to resume (independent provider jobs can run concurrently).'
+        type: choice
+        options: [nightly, groq, zai, vercel]
+        default: nightly
       models:
         description: 'Optional: up to two exact candidate IDs, separated by spaces. Blank uses nightly rotation.'
         type: string
