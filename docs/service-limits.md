@@ -98,6 +98,14 @@ is the earliest capacity return, not a promise that an entire session will fit.
 | 503 | `pricing_unavailable` / `no_free_models` | No safely eligible free route; stop. |
 | 502 | `unexpected_cost` | Cost audit failed; stop and investigate the provider. |
 
+ZAI uses HTTP 429 for several distinct conditions. Bailout classifies its
+[business error codes](https://docs.z.ai/api-reference/api-code): `1302`/`1305`
+receive bounded overload backoff; `1113`/`1308`/`1310` stop rapid retries for
+balance or allowance restrictions; `1311` marks the model unavailable on the
+account; `1313` stops for account policy. Errors may include the numeric
+`provider_error_code` for diagnosis. Provider response bodies are never exposed
+or logged, and no error enables paid access.
+
 `GET /v1/status` reports the conservative reservation counter and limits, never
 credentials or conversations. It also refuses when the allowance is exhausted.
 `GET /health` checks the gateway, not model availability. The CLI displays policy

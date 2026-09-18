@@ -53,6 +53,7 @@ class Failure(Exception):
         self.recoverable = status in (502, 504) if recoverable is None else recoverable
         self.failed_models = []
         self.retry_after_seconds = None
+        self.provider_error_code = None
         super().__init__(message)
 
     def payload(self):
@@ -64,10 +65,12 @@ class Failure(Exception):
             result["resets_at"] = (datetime.now(timezone.utc) + timedelta(seconds=self.retry_after_seconds)).isoformat()
             # Older clients display only this string, not structured retry fields.
             result["error"] += f" Retry after {self.retry_after_seconds} seconds."
+        if self.provider_error_code is not None:
+            result["provider_error_code"] = self.provider_error_code
         return result
 
 
-def upstream_failure(status, result):
+def upstream_failure(status, result, source=None):
     """Classify without exposing or storing provider bodies (which can echo prompts)."""
     error = result.get("error", {}) if isinstance(result, dict) else {}
     if not isinstance(error, dict):
@@ -77,7 +80,26 @@ def upstream_failure(status, result):
         metadata = {}
     kind = metadata.get("error_type")
     code = error.get("code")
-    if isinstance(code, int):
+    if source == "zai" and re.fullmatch(r"\d{4}", str(code)):
+        # ZAI uses HTTP 429 for balance/plan failures as well as overload.
+        # Classify its documented business codes without exposing the body.
+        business = str(code)
+        if business in {"1113", "1308", "1310"}:
+            failure = Failure(429, "ZAI's free allowance is unavailable. No paid fallback was used.", code="upstream_quota", recoverable=True, scope="provider")
+            failure.retry_after_seconds = 3600
+        elif business == "1311":
+            failure = Failure(503, "This ZAI model is unavailable on the service account.", code="provider_unavailable", recoverable=True)
+            failure.retry_after_seconds = 3600
+        elif business == "1313":
+            failure = Failure(503, "ZAI restricted this request under its account policy.", code="upstream_policy", recoverable=False)
+        elif business in {"1302", "1305"}:
+            failure = Failure(429, "ZAI's free capacity is temporarily busy. No paid fallback was used.", code="provider_rate_limited", recoverable=True, scope="provider")
+            failure.retry_after_seconds = 10
+        else:
+            failure = upstream_failure(status, {"error": {k: v for k, v in error.items() if k != "code"}})
+        failure.provider_error_code = business
+        return failure
+    if isinstance(code, int) and 100 <= code <= 599:
         status = code
     if status == 401 or kind == "authentication":
         return Failure(503, "A model provider could not authenticate the hosted service.", code="upstream_authentication", recoverable=True, scope="provider")
@@ -238,19 +260,19 @@ async def read_json(response, limit=8_000_000):
         raise Failure(502, "Invalid upstream response.") from None
 
 
-def check_message(result):
+def check_message(result, source=None):
     if not isinstance(result, dict):
         raise Failure(502, "Invalid model response.")
     if result.get("usage", {}).get("cost") is not None and not zero(result["usage"]["cost"]):
         raise Failure(502, "Unexpected upstream cost. Stopped; investigate the provider.", code="unexpected_cost", recoverable=False)
     if result.get("error"):
-        raise upstream_failure(502, result)
+        raise upstream_failure(502, result, source)
     choices = result.get("choices") or []
     if not choices:
         raise Failure(502, "The model returned no response. Try another free model.")
     choice = choices[0]
     if choice.get("error"):
-        raise upstream_failure(502, choice)
+        raise upstream_failure(502, choice, source)
     if choice.get("finish_reason") in ("content_filter", "refusal") or choice.get("message", {}).get("refusal"):
         raise upstream_failure(403, {})
     if choice.get("finish_reason") == "length":
@@ -489,20 +511,20 @@ class Router:
                                     error = await read_json(response, 64_000)
                                 except Failure:
                                     error = {}
-                                failure = upstream_failure(status, error)
+                                failure = upstream_failure(status, error, source)
                                 if source in {"groq", "mistral"} and status == 429 and not model.get("quota"):
                                     failure.scope = "provider"  # unsplit account bucket
                                 failure.retry_after_seconds = retry_seconds(getattr(response, "retry_after", None)) or failure.retry_after_seconds
                                 raise failure
                             if data["stream"]:
-                                async for item in self.read_stream(model["id"], response):
+                                async for item in self.read_stream(model["id"], response, source):
                                     if item["type"] == "done":
                                         completed = item
                                     else:
                                         yield item
                             else:
                                 result = await read_json(response, 2_000_000)
-                                message = check_message(result)
+                                message = check_message(result, source)
                                 completed = {"type": "done", "model": model["id"], "message": message,
                                              "usage": {"cost": 0 if result.get("usage", {}).get("cost") is not None else None},
                                              "tokens": result.get("usage", {}).get("total_tokens"), "checked_at": now()}
@@ -625,7 +647,7 @@ class Router:
         except Exception:
             yield event({"type": "error", "error": "Invalid model stream. No commands were run."})
 
-    async def read_stream(self, model, response):
+    async def read_stream(self, model, response, source=None):
         """Forward real text deltas; execute tools only after a validated final event."""
         message = {"role": "assistant", "content": ""}
         calls, reasoning, usage = {}, {}, {}
@@ -649,7 +671,7 @@ class Router:
                         continue
                     frame = json.loads(payload, parse_float=Decimal)
                     if frame.get("error"):
-                        raise upstream_failure(502, frame)
+                        raise upstream_failure(502, frame, source)
                     if frame.get("usage") or frame.get("x_groq", {}).get("usage"):
                         usage = frame.get("usage") or frame["x_groq"]["usage"]
                         if usage.get("cost") is not None and not zero(usage["cost"]):
@@ -657,7 +679,7 @@ class Router:
                     for choice in frame.get("choices", [])[:1]:
                         finish = choice.get("finish_reason") or finish
                         if choice.get("error"):
-                            raise upstream_failure(502, choice)
+                            raise upstream_failure(502, choice, source)
                         delta = choice.get("delta") or {}
                         if delta.get("refusal"):
                             raise upstream_failure(403, {})
@@ -693,7 +715,7 @@ class Router:
             if reasoning:
                 message["reasoning_details"] = list(reasoning.values())
             result = {"choices": [{"message": message, "finish_reason": finish}], "usage": usage}
-            checked = check_message(result)
+            checked = check_message(result, source)
             yield {"type": "done", "model": model, "message": checked, "usage": {"cost": 0 if usage.get("cost") is not None else None}, "checked_at": now(), "tokens": usage.get("total_tokens")}
         finally:
             try:

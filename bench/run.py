@@ -112,6 +112,7 @@ def handler(base, token, candidate, meter, state):
                     elif item.get("type") == "error":
                         state["inconclusive"] |= item.get("code") in TEMPORARY
                         print(json.dumps({"model": candidate["id"], "error_code": item.get("code"),
+                                          "provider_error_code": item.get("provider_error_code"),
                                           "retry_after_seconds": item.get("retry_after_seconds")}), flush=True)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/x-ndjson")

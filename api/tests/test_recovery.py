@@ -11,8 +11,34 @@ from router import Failure, Router, validate
 from test_router import Response, Upstream, completion, data, model, sse, tool
 
 
+@pytest.mark.parametrize('business,code,delay', [
+    ('1113', 'upstream_quota', 3600), ('1308', 'upstream_quota', 3600),
+    ('1310', 'upstream_quota', 3600), ('1311', 'provider_unavailable', 3600),
+    ('1302', 'provider_rate_limited', 10), ('1305', 'provider_rate_limited', 10),
+    ('1313', 'upstream_policy', None),
+])
+@pytest.mark.parametrize('numeric', [False, True])
+def test_zai_business_codes_distinguish_quota_and_overload_without_echoing_bodies(business, code, delay, numeric):
+    failure = policy.upstream_failure(429, {'error': {'code': int(business) if numeric else business,
+        'message': 'private echoed prompt'}}, 'zai')
+    assert failure.code == code
+    assert failure.retry_after_seconds == delay
+    assert failure.provider_error_code == business
+    assert failure.recoverable is (code != 'upstream_policy')
+    assert 'private echoed prompt' not in json.dumps(failure.payload())
+
+
 def stream_answer(text="Recovered"):
     return Response(None, raw=sse(dict(choices=[dict(delta=dict(content=text), finish_reason="stop")], usage=dict(cost=0))))
+
+
+async def test_zai_streamed_business_error_keeps_its_meaning():
+    response = Response(None, raw=sse(dict(error=dict(code='1113', message='private prompt'))))
+    with pytest.raises(Failure) as caught:
+        async for _ in Router(Upstream(), 'test').read_stream('zai/glm-4.7-flash:free', response, 'zai'):
+            pass
+    assert caught.value.code == 'upstream_quota'
+    assert caught.value.provider_error_code == '1113'
 
 
 def error(status, **metadata):
