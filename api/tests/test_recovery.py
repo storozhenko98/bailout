@@ -173,6 +173,20 @@ async def test_price_changes_during_fallback_skip_paid_candidate():
     result = await Router(stub, "test").chat(data())
     assert result["model"] == "test/c:free"
     assert [b["model"] for b in stub.inferences()] == ["test/a:free", "test/c:free"]
+
+
+async def test_expired_client_failure_hints_cannot_hide_every_free_route():
+    from test_capacity import Meter
+    stub = Sequence([Response(completion())])
+    meter = Meter({'openrouter': dict(ok=False, code='provider_cooldown', scope='provider', retry_after_seconds=60)})
+    request = validate({**data(), 'avoid_models': [f'test/{c}:free' for c in 'abcd']})
+    with pytest.raises(Failure) as caught:
+        await Router(stub, 'test', capacity=meter).chat(request)
+    assert caught.value.code == 'free_capacity_exhausted' and not stub.inferences()
+    meter.deny.clear()
+    stub.catalog[0]['pricing']['prompt'] = '0.01'
+    result = await Router(stub, 'test', capacity=meter).chat(request)
+    assert result['model'] == 'test/b:free'
     assert all(b["provider"]["max_price"]["prompt"] == 0 and not b["provider"]["allow_fallbacks"] for b in stub.inferences())
 
 

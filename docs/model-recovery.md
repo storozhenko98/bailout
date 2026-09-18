@@ -12,7 +12,12 @@ end-to-end deadline**, including eligibility checks, capacity waits and retries.
 Auto gives each inference at most 40 seconds when other qualified routes remain
 to be tried. For the last remaining candidate, it allows up to 90 seconds, as does
 a legacy pinned attempt. The overall request deadline still applies. There is no
-unbounded retry loop.
+unbounded retry loop. The CLI can make up to eight HTTP attempts within five
+minutes for a structured temporary-capacity refusal. It displays each wait,
+honors the server delay (up to 120 seconds), and uses increasing backoff. The
+five-minute bound includes requests and waits; Ctrl-C cancels either immediately.
+Authentication/policy failures, daily quota exhaustion, unknown pricing, invalid
+responses and the hosting cutoff are not retried by the CLI.
 
 - A temporary HTTP 429 gets one delayed retry of the same model. Respect numeric
   or HTTP-date `Retry-After`, add jitter, and wait at most 10 seconds for that retry.
@@ -89,9 +94,11 @@ separate transport ceiling is 4 MB and 2,048 messages.
 }
 ```
 
-Hints allow at most 35 route IDs and are rejected on pinned requests. The backend
-owns retries; the CLI does not resubmit failed HTTP requests and multiply that
-budget. Direct-provider route IDs are server aliases for verified free-tier
+Hints allow at most 35 route IDs and are rejected on pinned requests. If all routes
+are hinted as failed, the server reconsiders them through its shared cooldown and
+quota checks. The CLI clears stale failure hints only after a permitted capacity
+wait; it resubmits the same unfinished conversation and never bypasses the meter.
+Direct-provider route IDs are server aliases for verified free-tier
 access, rather than upstream model identifiers or zero list-price claims.
 
 Streaming returns NDJSON `model`, `text`, `done`, and `error` events. A `model`

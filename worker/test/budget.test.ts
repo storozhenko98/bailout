@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { CapacityLedger } from '../src/capacity.ts';
-import { BudgetLedger, POLICY } from '../src/budget.ts';
+import { BudgetLedger, POLICY, EVALUATION } from '../src/budget.ts';
 import gateway, { clientNetwork } from '../src/gateway.ts';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { fileURLToPath } from 'node:url';
@@ -73,7 +73,11 @@ test('authenticated evaluations have bounded bootstrap capacity and still consum
   const { gate, storage } = ledger();
   for (let i = 0; i < 1000; i++) assert.equal(gate.admit(client, 'benchmark', now + Math.floor(i / 30) * 60000).status, 200);
   assert.equal(new BudgetLedger(storage).admit(client, 'benchmark', now + 35 * 60000).body.code, 'client_rate_limited');
-  assert.equal(gate.admit(client, 'benchmark', now + 3600000).body.code, 'client_rate_limited');
+  for (let hour = 1; hour < 5; hour++) {
+    for (let i = 0; i < 1000; i++) assert.equal(new BudgetLedger(storage).admit(client, 'benchmark', now + hour * 3600000 + Math.floor(i / 30) * 60000).status, 200);
+  }
+  assert.equal(EVALUATION.day, 5000);
+  assert.equal(gate.admit(client, 'benchmark', now + 5 * 3600000).body.code, 'client_rate_limited');
   const capped = ledger(310).gate;
   assert.equal(capped.admit(client, 'benchmark', now).status, 200);
   assert.equal(capped.admit(client, 'benchmark', now + 60000).body.code, 'budget_exhausted');

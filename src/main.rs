@@ -217,7 +217,53 @@ fn execute_observed(
     })
 }
 
-fn stream_chat(base: &str, payload: Value, routing: &mut routing::Routing) -> Result<Value> {
+enum ChatAttempt {
+    Complete(Value),
+    Refused(Value),
+}
+
+fn stream_chat(base: &str, mut payload: Value, routing: &mut routing::Routing) -> Result<Value> {
+    let started = Instant::now();
+    for attempt in 0..8 {
+        if CANCELLED.load(Ordering::SeqCst) {
+            return Err("Interrupted.".into());
+        }
+        let timeout = Duration::from_secs(300)
+            .saturating_sub(started.elapsed())
+            .min(Duration::from_secs(180));
+        match stream_chat_once(base, &payload, routing, timeout)? {
+            ChatAttempt::Complete(done) => return Ok(done),
+            ChatAttempt::Refused(failure) => {
+                let error = failure["error"].as_str().unwrap_or("Model request failed.");
+                let Some(delay) = routing::retry_delay(&failure, started.elapsed(), attempt) else {
+                    return Err(error.to_string());
+                };
+                ui::note(&format!("Free capacity is busy. Retrying in {}s. Your session is preserved. Ctrl+C to cancel.", delay.as_secs()));
+                let waiting = ui::Spinner::new("Waiting for free capacity");
+                let until = Instant::now() + delay;
+                while Instant::now() < until {
+                    if CANCELLED.load(Ordering::SeqCst) {
+                        return Err("Interrupted.".into());
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+                drop(waiting);
+                // The server's shared ledger remains authoritative. Expire
+                // process-local avoidance hints before checking routes again.
+                routing.retry();
+                routing.hints(&mut payload);
+            }
+        }
+    }
+    Err("Free capacity is still busy after repeated waits. Your session is preserved; try again later.".into())
+}
+
+fn stream_chat_once(
+    base: &str,
+    payload: &Value,
+    routing: &mut routing::Routing,
+    timeout: Duration,
+) -> Result<ChatAttempt> {
     let mut cmd = Command::new("curl");
     cmd.args([
         "-q",
@@ -227,7 +273,7 @@ fn stream_chat(base: &str, payload: Value, routing: &mut routing::Routing) -> Re
         "--connect-timeout",
         "15",
         "--max-time",
-        "180",
+        &timeout.as_secs().max(1).to_string(),
         "--max-filesize",
         "2000000",
         "--write-out",
@@ -272,7 +318,7 @@ fn stream_chat(base: &str, payload: Value, routing: &mut routing::Routing) -> Re
     let run = execute_observed(
         cmd,
         Some(payload.to_string().into_bytes()),
-        Duration::from_secs(185),
+        timeout + Duration::from_secs(5),
         false,
         2_000_010,
         Some(&mut observe),
@@ -295,12 +341,12 @@ fn stream_chat(base: &str, payload: Value, routing: &mut routing::Routing) -> Re
     if code != "200" {
         let value: Value = serde_json::from_str(body).unwrap_or(Value::Null);
         routing.observe(&value);
-        return Err(value["error"]
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                format!("Server request failed (HTTP {code}). Try again shortly.")
-            }));
+        if value["error"].is_string() {
+            return Ok(ChatAttempt::Refused(value));
+        }
+        return Err(format!(
+            "Server request failed (HTTP {code}). Try again shortly."
+        ));
     }
     let mut done = None;
     for line in body.lines().filter(|s| !s.is_empty()) {
@@ -308,17 +354,18 @@ fn stream_chat(base: &str, payload: Value, routing: &mut routing::Routing) -> Re
             .map_err(|_| "Invalid model stream. No commands were run.")?;
         match event["type"].as_str() {
             Some("error") => {
-                return Err(event["error"]
-                    .as_str()
-                    .unwrap_or("Model stream failed.")
-                    .to_string())
+                if done.is_some() {
+                    return Err("Invalid model stream. No commands were run.".into());
+                }
+                return Ok(ChatAttempt::Refused(event));
             }
             Some("done") if done.is_none() => done = Some(event),
             Some("model" | "text") if done.is_none() => (),
             _ => return Err("Invalid model stream. No commands were run.".into()),
         }
     }
-    done.ok_or("Model connection closed early. No commands were run.".into())
+    done.map(ChatAttempt::Complete)
+        .ok_or("Model connection closed early. No commands were run.".into())
 }
 
 fn bash(args: &Value) -> Result<Value> {

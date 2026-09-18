@@ -94,7 +94,7 @@ test('aggregate health survives restarts and does not accept request-specific er
 
 test('evaluation has a durable daily allowance separate from production quotas', () => {
   const db = storage(); const c = new CapacityLedger(db);
-  for (let i = 0; i < 1000; i++) assert.equal(c.benchmark(now).status, 200);
+  for (let i = 0; i < 5000; i++) assert.equal(c.benchmark(now).status, 200);
   assert.equal(new CapacityLedger(db).benchmark(now).status, 429);
   assert.equal(c.reserve('openrouter', 'test/a:free', 100, now).ok, true);
 });

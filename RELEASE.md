@@ -1,11 +1,11 @@
-# bailout v0.7.2
+# bailout v0.7.3
 
-Fix a terminal hang found while bootstrapping a real fresh Linux box.
+Wait through temporary free-provider capacity limits without losing the task.
 
-- Captured commands run in their own session, without access to the controlling terminal. Nested shell probes such as `bash -i -c 'command -v opencode'` can finish instead of waiting forever for terminal ownership.
-- Ctrl-C still cancels the entire captured process group. Explicit interactive sign-in and local shell handoffs retain the real terminal.
-- A controlling-PTY regression check covers the shell probe alongside cancellation, private credential entry, and uninstall checks.
-- Includes v0.7.1's instructions to read official installation sources, verify the exact requested tool, and diagnose failures before retrying.
+- The terminal explains temporary capacity waits and retries the unfinished response with backoff, within five minutes and eight HTTP attempts. Ctrl-C cancels immediately.
+- Completed Bash commands stay in history and are never replayed by the wait loop. Real-terminal tests cover cancellation and exactly-once execution across a retry.
+- Daily quota, authentication, policy, pricing and hosting-budget failures still stop promptly. Every retry passes the same free-pricing and shared quota checks.
+- Provider qualification jobs now resume interrupted suites while retaining completed passes and failures. Only complete qualifying results enter production routing.
 
 Restart bailout v0.4+ to update automatically, or install:
 

@@ -20,6 +20,7 @@ import time
 binary = pathlib.Path(sys.argv[1]).resolve()
 calls = []
 gateway_failures = 0
+capacity_failures = {}
 model_wait = threading.Event()
 release_wait = threading.Event()
 
@@ -54,6 +55,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(503); self.end_headers()
             self.wfile.write(b'Temporary gateway failure')
             return
+        if prompt in ('wait capacity', 'cancel capacity', 'wait after bash'):
+            after_bash = body['messages'][-1]['role'] == 'tool'
+            should_wait = prompt != 'wait after bash' or after_bash
+            previous = capacity_failures.get(prompt, 0)
+            if should_wait and (previous == 0 or prompt == 'cancel capacity'):
+                capacity_failures[prompt] = previous + 1
+                failure = dict(error='Free capacity is busy.', code='free_capacity_exhausted', retry_after_seconds=1)
+                # Exercise both ordinary HTTP refusals and streamed errors.
+                if prompt == 'wait after bash':
+                    self.send_response(200); self.end_headers()
+                    self.wfile.write((json.dumps(dict(type='error', **failure))+'\n').encode())
+                else:
+                    self.send_response(429); self.end_headers()
+                    self.wfile.write(json.dumps(failure).encode())
+                return
         if prompt == 'wait model':
             model_wait.set()
             release_wait.wait(15)
@@ -62,11 +78,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif prompt in ('local login', 'cancel login'):
             command = 'read -r -s -p "Local token: " token; test -n "$token"; printf "\\nLocal auth complete\\n"'
             message = dict(role='assistant', content=None, tool_calls=[dict(id='local_1', type='function', function=dict(name='bash', arguments=json.dumps(dict(command=command, interactive=True))))])
-        elif prompt in ('create hello.txt', 'wait bash', 'broken stream', 'auto recovery', 'pinned mismatch', 'shell startup probe'):
+        elif prompt in ('create hello.txt', 'wait bash', 'broken stream', 'auto recovery', 'pinned mismatch', 'shell startup probe', 'wait after bash'):
             command = "printf 'hello bailout\\n' > hello.txt; cat hello.txt"
             if prompt == 'wait bash': command = 'sleep 30 & echo $! > child.pid; wait'
             if prompt == 'shell startup probe': command = "bash --noprofile --norc -i -c 'printf shell-startup-ok'"
             if prompt in ('auto recovery', 'pinned mismatch'): command = "printf 'once\\n' >> recovery-count.txt"
+            if prompt == 'wait after bash': command = "printf 'once\\n' >> capacity-count.txt"
             message = dict(role='assistant', content=None, tool_calls=[dict(id='call_1', type='function', function=dict(name='bash', arguments=json.dumps(dict(command=command))))])
         else:
             message = dict(role='assistant', content='Reply: '+prompt)
@@ -168,6 +185,13 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
     gateway = run('gateway retry')
     assert gateway.returncode == 1, 'CLI must not multiply backend recovery attempts'
     assert gateway_failures == 1
+    before = len(calls)
+    resumed = run('wait capacity')
+    assert resumed.returncode == 0 and 'Retrying in' in resumed.stderr, resumed.stderr
+    assert calls[before]['messages'] == calls[before+1]['messages']
+    resumed = run('wait after bash')
+    assert resumed.returncode == 0 and pathlib.Path(folder, 'capacity-count.txt').read_text() == 'once\n'
+    assert calls[-2]['messages'] == calls[-1]['messages'], 'Retry lost conversation or replayed a tool'
     for prompt in ['budget exhausted', 'client limited']:
         before = len(calls)
         refused = run(prompt)
@@ -265,6 +289,12 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
         terminal.expect('Stopped.')
         terminal.prompt()
         release_wait.set()
+        terminal.send('cancel capacity\r')
+        terminal.expect('Waiting for free capacity')
+        terminal.send(b'\x03')
+        terminal.expect('Stopped.')
+        terminal.prompt()
+        assert capacity_failures['cancel capacity'] == 1, 'Cancellation must stop automatic retries'
         terminal.send('wait bash\r')
         terminal.expect('Running Bash')
         pidfile = pathlib.Path(folder, 'child.pid')

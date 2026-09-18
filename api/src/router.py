@@ -371,7 +371,12 @@ class Router:
     async def candidates(self, data=None):
         self.snapshot = await self.capacity.rankings()
         data = data or {}
-        return rank(await self.discover(), self.snapshot, data.get("preferred_model"), data.get("avoid_models", []))
+        models = await self.discover()
+        candidates = rank(models, self.snapshot, data.get("preferred_model"), data.get("avoid_models", []))
+        # Client failure hints may outlive a brief server cooldown. They must
+        # not hide every qualified route after capacity has returned. Shared
+        # reservations and cooldowns still gate every attempt below.
+        return candidates or rank(models, self.snapshot, data.get("preferred_model"))
 
     async def endpoints(self, model):
         result = await self.metadata(f'/models/{model["id"]}/endpoints')
@@ -401,7 +406,7 @@ class Router:
             raise Failure(503, "The hosted service is not configured.")
         catalog = await self.candidates(data)
         if data["model"] == "auto":
-            candidates = [m for m in catalog if m["id"] not in data.get("avoid_models", [])]
+            candidates = catalog
         else:
             candidates = [m for m in catalog if m["id"] == data["model"]]
         if not candidates:

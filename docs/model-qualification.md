@@ -85,16 +85,16 @@ regression checks; blank input uses the same rotation as the scheduled job.
 If discovery is empty or a manually requested model is missing, the evaluator
 retries fresh discovery twice with short backoff and reports any still-missing IDs.
 It never substitutes cached eligibility for a failed pricing check.
-It evaluates up to two models with at most 80 inference API submissions per model
-(160 per workflow), including retries and capacity refusals. Each candidate has
+It evaluates up to two models with at most 160 inference API submissions per model
+(320 per workflow), including retries and capacity refusals. Each candidate has
 its own allowance so a throttled provider cannot starve the next model. The
 controller stops starting new tasks after 45 minutes, leaving time to finish the
 current bounded task and upload completed evidence before the 60-minute job limit.
 Incomplete candidates never erase another candidate's completed results. The
-gateway independently caps evaluation at 1,000 requests per UTC day, shared across
+gateway independently caps evaluation at 5,000 requests per UTC day, shared across
 workflow reruns; production provider quotas and the hosting allowance still apply.
 The authenticated evaluator allows up to 1,000 admissions per hour for release
-verification, with the same 30-per-minute pacing and 1,000-per-day ceiling. Public
+verification, with 30-per-minute pacing and a 5,000-per-day ceiling. Public
 client limits are unchanged. Catalog reads also consume evaluator admissions.
 Evaluation never switches models. The controller may retry the same conversation
 twice for transient provider failures or short quota delays, honoring delays up to 65 seconds within a 165-second
@@ -106,6 +106,13 @@ Working routes due for a weekly regression check are prioritized, followed by
 newly qualified models due for a follow-up run. Other candidates rotate by oldest
 evidence, with daily rotation of untested candidates so outages cannot strand the
 queue. This bounded rotation does not reevaluate every model nightly.
+
+The manual `qualify provider pools` workflow runs Groq, ZAI and Vercel independently.
+Interrupted suites cache completed task passes **and failures**, then resume only
+unscored tasks. Evidence expires after 48 hours or any harness/fixture/fingerprint
+change. A completed suite is never reused as a new run. Reports and resumable
+checkpoints are uploaded even when capacity prevents completion; only complete
+ten-task results can update production rankings.
 
 The Bash container has no network, provider keys, GitHub token, Docker socket, or
 publishing credentials. A Unix socket exposes a capped proxy for one model. The
