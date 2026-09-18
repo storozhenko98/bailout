@@ -30,7 +30,8 @@ verified Free organization, the Groq pool is capped conservatively at 28 attempt
 per minute, 950 per 24 hours, 7,800 tokens per minute and 190,000 per 24 hours.
 Token quotas often bind before request counts. `GET /v1/status` lists configured
 provider limits; a provider adapter being in the source does not mean it is live.
-Each provider allows at most eight concurrent calls and each model at most two.
+Each provider allows at most eight concurrent calls and each model at most two
+(one for ZAI free routes).
 A refusal never enables paid inference.
 
 ## Hosting allowance

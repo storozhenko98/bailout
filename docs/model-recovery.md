@@ -33,7 +33,7 @@ unbounded retry loop.
 
 A shared SQLite Durable Object reserves **every upstream attempt**, including
 retries. It applies rolling request/token quotas, at most eight concurrent calls
-per provider, and two per model. This prevents a burst from spending all available
+per provider, and two per model (one for ZAI free routes). This prevents a burst from spending all available
 slots on one failing model. Rejected and timed-out attempts remain counted;
 successful reported token usage reconciles conservative reservations. Abandoned
 concurrency leases expire after 120 seconds.

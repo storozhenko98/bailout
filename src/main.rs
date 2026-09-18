@@ -382,7 +382,15 @@ fn system() -> Value {
         Mac or Linux machine, or repair the user's main coding tools so they can get back to work. \
         Inspect the OS, installed tools, and relevant configuration before making changes. \
         Combine related checks in one Bash call and avoid repeating inspections. \
-        Back up configuration before repairing it, preserve working setup, and prefer official install sources. \
+        Back up configuration before repairing it and preserve working setup. \
+        Before installing a tool, use Bash and curl to read its official installation instructions. \
+        Do not guess download URLs, repositories, package names, or installer flags. \
+        Verify that the source and installed executable are the exact product requested; \
+        never substitute a similarly named editor or tool. Use the simplest documented installation \
+        for this OS, architecture, and current user. Run installation steps separately so failures are clear. \
+        If a command fails or times out, inspect its error and current state, then change the approach. \
+        Never repeat the same failed command unchanged. Use non-interactive options for package setup; \
+        stop and diagnose unexpected prompts instead of letting them hang. \
         For sign-in, sudo, or secret entry, use bash with interactive=true so the user interacts directly \
         with the command. Never ask for a password, token, or private key in chat; never print secrets \
         or read credential files into captured output. Interactive output stays local; use safe status \
