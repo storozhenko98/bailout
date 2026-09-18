@@ -117,6 +117,10 @@ class Providers:
             if type(window) is not int or window < 32768:
                 continue
             params = {"reasoning_effort": "low"} if provider == "groq" and id.startswith("openai/gpt-oss-") else {}
+            if provider == 'groq':
+                # GPT-OSS and Qwen 3.8 lack parallel tool support. Explicitly
+                # request sequential calls instead of the API's true default.
+                params['parallel_tool_calls'] = False
             if provider == "zai":
                 params = {"thinking": {"type": "disabled"}}
             model = {"id": f"{provider}/{id}:free", "upstream_id": id, "source": provider,

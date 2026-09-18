@@ -71,6 +71,11 @@ needed to replace that evidence. Qualification is necessary but not sufficient:
 live free eligibility, context, cooldowns, quotas, and the hosting allowance must
 all pass before serving a user.
 
+Groq requests explicitly disable parallel tool calls, matching the documented
+capabilities of GPT-OSS and Qwen 3.8. This parameter is part of the qualification
+fingerprint, so evidence from the earlier implicit-default configuration cannot
+qualify the corrected adapter.
+
 The September 18 validator correction accepts equivalent shell quoting and PATHs
 built with variables, using the existing executable checks to decide correctness.
 For unfinished v0.7.3 checkpoints only, valid passes and unrelated failures remain;

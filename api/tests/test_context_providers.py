@@ -179,6 +179,19 @@ async def test_vercel_unknown_additional_fees_and_paid_credit_models_are_exclude
         assert await p.discover() == []
 
 
+async def test_groq_sequential_tool_configuration_is_fingerprinted_and_sent():
+    transport = Direct('groq', [{'id': 'openai/gpt-oss-120b', 'context_window': 131072}])
+    p = Providers(transport, {'groq': 'fake'}, free_accounts())
+    model = (await p.discover())[0]
+    assert model['parameters'] == {'reasoning_effort': 'low', 'parallel_tool_calls': False}
+    body = p.body(model, [{'role': 'user', 'content': 'repair a config'}], True, 2048)
+    assert body['parallel_tool_calls'] is False
+    assert body['tools'][0]['function']['name'] == 'bash'
+    from providers import fingerprint
+    old = {**model, 'parameters': {'reasoning_effort': 'low'}}
+    assert fingerprint(old) != model['fingerprint']
+
+
 async def test_mistral_free_attestation_tools_context_and_call_id_mapping():
     transport = Direct("mistral", [{"id": "devstral-2507", "max_context_length": 128000,
         "capabilities": {"function_calling": True, "completion_chat": True}}])
