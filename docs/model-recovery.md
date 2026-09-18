@@ -9,9 +9,9 @@ request can retry that model, but never silently changes it.
 
 One model response has at most **four upstream attempts** and a **120-second
 end-to-end deadline**, including eligibility checks, capacity waits and retries.
-Auto gives each inference at most 40 seconds when other qualified routes are in
-the candidate list. With just one candidate, it allows up to 90 seconds, as does a
-legacy pinned attempt. The overall request deadline still applies. There is no
+Auto gives each inference at most 40 seconds when other qualified routes remain
+to be tried. For the last remaining candidate, it allows up to 90 seconds, as does
+a legacy pinned attempt. The overall request deadline still applies. There is no
 unbounded retry loop.
 
 - A temporary HTTP 429 gets one delayed retry of the same model. Respect numeric
@@ -37,6 +37,12 @@ per provider, and two per model. This prevents a burst from spending all availab
 slots on one failing model. Rejected and timed-out attempts remain counted;
 successful reported token usage reconciles conservative reservations. Abandoned
 concurrency leases expire after 120 seconds.
+
+All qualified models can serve concurrent users. When a model has no free slot,
+Auto immediately tries another eligible model, including a lower-scoring one on
+the same provider. A full account quota instead requires an independent provider.
+There is no top-model-only serving restriction or fixed candidate-list cutoff;
+the four-attempt and total-time bounds still apply.
 
 Busy routes get shared cooldowns, so the next user benefits from earlier failures.
 The terminal also keeps a successful-model preference and short failure hints in

@@ -226,6 +226,19 @@ async def test_single_auto_route_can_use_response_window_but_not_exceed_request_
             assert "did not respond in time" in events[-1]["error"]
 
 
+async def test_last_fallback_gets_response_time_after_earlier_route_failed(monkeypatch):
+    monkeypatch.setattr(policy, 'AUTO_ATTEMPT_SECONDS', .01)
+    monkeypatch.setattr(policy, 'PINNED_ATTEMPT_SECONDS', .2)
+    class Delayed(Response):
+        async def chunks(self):
+            await asyncio.sleep(.04)
+            yield sse(dict(choices=[dict(delta=dict(content='Recovered'), finish_reason='stop')]))
+    stub = Sequence([error(503), Delayed(None)])
+    stub.catalog = [model('test/a:free'), model('test/b:free')]
+    events = await stream(Router(stub, 'test'), data(stream=True))
+    assert events[-1]['type'] == 'done' and events[-1]['model'] == 'test/b:free'
+
+
 async def test_switch_strips_opaque_reasoning_but_keeps_completed_tools():
     stub = Sequence([error(503), Response(completion())])
     request = data()

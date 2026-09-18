@@ -51,12 +51,12 @@ test('global inference quota is shared across unrelated clients', () => {
 
 test('client minute, hour and day limits survive time and object changes', () => {
   const { gate, storage } = ledger();
-  for (let i = 0; i < 30; i++) assert.equal(gate.admit(client, 'read', now).status, 200);
+  for (let i = 0; i < 60; i++) assert.equal(gate.admit(client, 'read', now).status, 200);
   let r = new BudgetLedger(storage).admit(client, 'read', now);
   assert.equal(r.body.code, 'client_rate_limited'); assert.equal(r.body.retry_after_seconds, 60);
-  for (let i = 1; i < 10; i++) for (let j = 0; j < 30; j++) assert.equal(gate.admit(client, 'read', now + i * 60000).status, 200);
+  for (let i = 1; i < 10; i++) for (let j = 0; j < 60; j++) assert.equal(gate.admit(client, 'read', now + i * 60000).status, 200);
   r = gate.admit(client, 'read', now + 10 * 60000); assert.equal(r.body.code, 'client_rate_limited'); assert.match(r.body.error, /hour/);
-  for (let hour = 1; hour < 4; hour++) for (let i = 0; i < (hour === 3 ? 100 : 300); i++) assert.equal(gate.admit(client, 'read', now + hour * 3600000 + Math.floor(i / 30) * 60000).status, 200);
+  for (let hour = 1; hour < 4; hour++) for (let i = 0; i < (hour === 3 ? 200 : 600); i++) assert.equal(gate.admit(client, 'read', now + hour * 3600000 + Math.floor(i / 60) * 60000).status, 200);
   r = gate.admit(client, 'read', now + 4 * 3600000); assert.equal(r.body.code, 'client_rate_limited'); assert.match(r.body.error, /daily/);
 });
 
@@ -67,6 +67,9 @@ test('IPv6 addresses in a /64 and mapped IPv4 cannot evade identity grouping', (
 });
 
 test('authenticated evaluations have bounded bootstrap capacity and still consume the hosting allowance', () => {
+  const pacing = ledger().gate;
+  for (let i = 0; i < 30; i++) assert.equal(pacing.admit(client, 'benchmark', now).status, 200);
+  assert.equal(pacing.admit(client, 'benchmark', now).body.code, 'client_rate_limited');
   const { gate, storage } = ledger();
   for (let i = 0; i < 1000; i++) assert.equal(gate.admit(client, 'benchmark', now + Math.floor(i / 30) * 60000).status, 200);
   assert.equal(new BudgetLedger(storage).admit(client, 'benchmark', now + 35 * 60000).body.code, 'client_rate_limited');
@@ -80,7 +83,7 @@ function runtime(allowance, api) {
   return new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'gateway', modules: [{type:'ESModule', path:'gateway.js', contents:buildSync({entryPoints:[fileURLToPath(new URL('../src/gateway.ts', import.meta.url))],bundle:true,write:false,format:'esm',platform:'browser'}).outputFiles[0].text}], compatibilityDate: '2026-09-17',
     bindings: { BUDGET_ALLOWANCE_MICRO_USD: String(allowance), SERVICE_PAUSED: 'false' },
     durableObjects: { BUDGET: { className: 'BudgetGuard', useSQLite: true } },
-    ratelimits: { EDGE_IP_LIMIT: { namespace_id: '1005', simple: { limit: 60, period: 60 } }, EDGE_GLOBAL_LIMIT: { namespace_id: '1006', simple: { limit: 240, period: 60 } } },
+    ratelimits: { EDGE_IP_LIMIT: { namespace_id: '1005', simple: { limit: 120, period: 60 } }, EDGE_GLOBAL_LIMIT: { namespace_id: '1006', simple: { limit: 480, period: 60 } } },
     serviceBindings: { API: api },
     outboundService: () => Response.json([]),
   }] }));
@@ -187,6 +190,16 @@ test('model cooldown preserves other models, provider cooldown preserves indepen
   assert.equal(capacity.reserve('openrouter', 'test/a:free', 0, now + 3600000).ok, true);
   assert.throws(() => capacity.reserve('unknown', 'model', 0, now));
   assert.throws(() => capacity.reserve('groq', 'model', -1, now));
+});
+
+test('a full model leaves sibling models and independent providers available', () => {
+  const { storage } = ledger(); const capacity = new CapacityLedger(storage);
+  assert.equal(capacity.reserve('openrouter', 'test/top:free', 100, now).ok, true);
+  assert.equal(capacity.reserve('openrouter', 'test/top:free', 100, now).ok, true);
+  const denied = capacity.reserve('openrouter', 'test/top:free', 100, now);
+  assert.equal(denied.scope, 'model'); assert.equal(denied.code, 'route_busy');
+  assert.equal(capacity.reserve('openrouter', 'test/basic:free', 100, now).ok, true);
+  assert.equal(capacity.reserve('groq', 'groq/test:free', 100, now).ok, true);
 });
 
 test('daily provider allowance survives restarts and does not double on midnight rollover', () => {

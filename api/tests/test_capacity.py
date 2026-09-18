@@ -1,4 +1,4 @@
-from conftest import free_accounts
+from conftest import free_accounts, qualification
 import asyncio
 import json
 from email.utils import format_datetime
@@ -8,7 +8,7 @@ import pytest
 
 from router import Router, Failure, GROQ_MODEL, retry_seconds
 from capacity import Capacity, LocalCapacity
-from test_router import Response, completion, data, model, sse, tool
+from test_router import Upstream, Response, completion, data, model, sse, tool
 from test_recovery import Sequence, error, stream, stream_answer
 
 
@@ -62,6 +62,53 @@ class Meter(LocalCapacity):
 
 async def no_wait(_):
     pass
+
+
+async def test_concurrent_users_overflow_to_an_eighty_percent_model_without_waiting():
+    release = asyncio.Event()
+    class Concurrent(Upstream):
+        async def request(self, url, **kwargs):
+            if url.endswith('/chat/completions'):
+                if json.loads(kwargs['body'])['model'] == 'test/a:free':
+                    await release.wait()
+                else:
+                    release.set()
+            return await super().request(url, **kwargs)
+    class Shared(Meter):
+        active = 0
+        async def reserve(self, provider, model, tokens):
+            if model == 'test/a:free':
+                if self.active == 2:
+                    return dict(ok=False, code='route_busy', scope='model', retry_after_seconds=2)
+                self.active += 1
+            return await super().reserve(provider, model, tokens)
+    stub, meter = Concurrent(catalog=[model('test/a:free'), model('test/b:free')]), Shared()
+    catalog = await Router(stub, 'test').catalog()
+    async def rankings():
+        return {'models': [qualification(m, trials=10, passed=9 if m['id'] == 'test/a:free' else 8, runs=1) for m in catalog]}
+    meter.rankings = rankings
+    async def no_sleep(_):
+        raise AssertionError('An eligible fallback should be used immediately')
+    async with asyncio.timeout(2):
+        results = await asyncio.gather(*(Router(stub, 'test', capacity=meter, sleep=no_sleep).chat(data()) for _ in range(3)))
+    assert sorted(r['model'] for r in results) == ['test/a:free', 'test/a:free', 'test/b:free']
+    assert len(stub.inferences()) == 3 and len(meter.settlements) == 3
+    assert all(r['free_only'] for r in results)
+
+
+async def test_eligible_routes_after_the_first_thirty_five_are_reachable():
+    class Unavailable(Meter):
+        async def reserve(self, provider, model, tokens):
+            if model != 'test/35:free':
+                return dict(ok=False, code='route_busy', scope='model', retry_after_seconds=2)
+            return await super().reserve(provider, model, tokens)
+    stub, meter = Upstream(catalog=[model(f'test/{i:02}:free') for i in range(36)]), Unavailable()
+    catalog = await Router(stub, 'test').catalog()
+    async def rankings():
+        return {'models': [qualification(m) for m in catalog]}
+    meter.rankings = rankings
+    result = await Router(stub, 'test', capacity=meter).chat(data())
+    assert result['model'] == 'test/35:free' and len(stub.inferences()) == 1
 
 
 @pytest.mark.parametrize('streaming', [True, False])
@@ -194,8 +241,39 @@ async def test_secondary_catalog_failure_during_recovery_keeps_other_routes_avai
 async def test_local_quota_uses_other_provider_without_sending_rejected_attempt():
     meter = Meter(dict(openrouter=dict(ok=False, code='provider_capacity', retry_after_seconds=60)))
     stub = Multiple([])
-    events = await stream(Router(stub, 'test', capacity=meter, provider_keys={'groq':'groq-test'}, accounts=free_accounts(), sleep=no_wait), data(stream=True))
+    route = Router(stub, 'test', capacity=meter, provider_keys={'groq':'groq-test'}, accounts=free_accounts(), sleep=no_wait)
+    catalog = await route.discover()
+    async def rankings():
+        return {'models': [qualification(m, trials=10, passed=8 if m['source'] == 'groq' else 10, runs=1) for m in catalog]}
+    meter.rankings = rankings
+    events = await stream(route, data(stream=True))
     assert events[-1]['model'] == GROQ_MODEL and not stub.inferences()
+
+
+async def test_last_pool_can_wait_briefly_after_other_candidates_cannot_fit_context():
+    waits = []
+    class BrieflyBusy(Meter):
+        denied = False
+        async def reserve(self, provider, model, tokens):
+            if not self.denied:
+                self.denied = True
+                return dict(ok=False, code='provider_capacity', scope='provider', retry_after_seconds=2)
+            return await super().reserve(provider, model, tokens)
+    stub, meter = Multiple([]), BrieflyBusy()
+    stub.catalog = [model('test/a:free')]
+    stub.catalog[0]['context_length'] = 32768
+    async def sleep(seconds):
+        waits.append(seconds)
+    route = Router(stub, 'test', capacity=meter, provider_keys={'groq': 'groq-test'}, accounts=free_accounts(), sleep=sleep)
+    catalog = await route.discover()
+    async def rankings():
+        return {'models': [qualification(m, trials=10, passed=8 if m['source'] == 'groq' else 10, runs=1) for m in catalog]}
+    meter.rankings = rankings
+    request = data(stream=True)
+    request['messages'][0]['content'] = 'x' * 40000
+    events = await stream(route, request)
+    assert events[-1]['model'] == GROQ_MODEL and len(waits) == 1
+    assert not stub.inferences() and len(meter.calls) == 1
 
 
 async def test_all_capacity_exhausted_returns_honest_retry_time_no_inference():

@@ -10,17 +10,17 @@ including model lists, status and API documentation, count toward these limits:
 
 | Scope | Limit |
 | --- | --- |
-| Client IP | 30 requests per minute |
-| Client IP | 300 requests per hour |
-| Client IP | 1,000 requests per UTC day |
-| All clients combined | 120 requests per minute |
-| All clients combined, chat admissions | 60 requests per minute |
+| Client IP | 60 requests per minute |
+| Client IP | 600 requests per hour |
+| Client IP | 2,000 requests per UTC day |
+| All clients combined | 240 requests per minute |
+| All clients combined, chat admissions | 120 requests per minute |
 
 IPv6 addresses share a limit within their /64. People behind the same NAT share
 an IP limit. An installation ID or user-supplied forwarding header cannot bypass
 it. These are fixed windows, so adjacent windows can admit a boundary burst.
 Cheap Cloudflare rate-limit bindings additionally reject bursts before the shared
-gate (60/IP/minute and 240/location/minute); those preliminary limits are approximate.
+gate (120/IP/minute and 480/location/minute); those preliminary limits are approximate.
 The global SQLite Durable Object makes the final admission decision atomically.
 These are gateway admissions, not promised model calls. Separately, the provider
 ledger permits 18 OpenRouter inference attempts per rolling minute and 1,000 per

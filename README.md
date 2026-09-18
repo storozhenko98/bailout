@@ -165,7 +165,7 @@ implementation uses a conservative byte-based token estimate and can switch earl
 
 Free capacity is **shared and best effort**. OpenRouter's account quota and provider
 availability still apply. A final HTTP 429 means wait for the indicated capacity reset;
-the app never pays to bypass it. The public gateway enforces 30 requests/minute, 300/hour and 1,000/day per IP,
+the app never pays to bypass it. The public gateway enforces 60 requests/minute, 600/hour and 2,000/day per IP,
 plus a globally shared allowance. IPv6 /64s and users behind a NAT share limits.
 At the hosting cutoff, HTTP 503 `budget_exhausted` explains when capacity returns;
 the CLI displays it without automatically retrying. See [limits and error codes](docs/service-limits.md).

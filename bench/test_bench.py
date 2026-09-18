@@ -56,8 +56,8 @@ class ScoringTests(unittest.TestCase):
         for day in range(5):
             seen.update(m['id'] for m in run.select_candidates(candidates, {}, 2, (start + timedelta(days=day)).isoformat()))
         self.assertEqual(len(seen), 10, 'outages must not strand evaluation on the same newcomers')
-        old = {**MODEL, 'trials': 20, 'passed': 20, 'runs': 2, 'critical_failures': 0, 'evaluated_at': (start - timedelta(days=8)).isoformat()}
-        promising = {**old, 'trials': 10, 'passed': 10, 'runs': 1, 'evaluated_at': start.isoformat()}
+        old = {**MODEL, 'trials': 10, 'passed': 8, 'runs': 1, 'critical_failures': 0, 'evaluated_at': (start - timedelta(days=8)).isoformat()}
+        promising = {**old, 'trials': 10, 'passed': 8, 'runs': 1, 'evaluated_at': start.isoformat()}
         prior = {candidates[0]['id']: old, candidates[1]['id']: promising}
         selected = run.select_candidates(candidates, prior, 2, start.isoformat())
         self.assertEqual([m['id'] for m in selected], [candidates[0]['id'], candidates[1]['id']])

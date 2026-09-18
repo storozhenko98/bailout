@@ -2,9 +2,9 @@
 from datetime import datetime, timezone
 
 SUITE = "bailout-setup-v1"
-MIN_TRIALS = 20
-MIN_RUNS = 2
-MIN_PASS_RATE = .9
+MIN_TRIALS = 10
+MIN_RUNS = 1
+MIN_PASS_RATE = .8
 
 
 def qualified(row, model):
@@ -30,13 +30,14 @@ def rank(models, snapshot, preferred=None, avoid=()):
             continue
         quality = row["passed"] / row["trials"]
         state = health.get(model["id"], {})
-        # Quality is dominant. Availability can reorder close contenders, and
-        # a successful session stays on its model within the same quality tier.
+        # Qualification establishes basic competence. Recent availability can
+        # outweigh the remaining quality spread (80-100%); affinity is only a
+        # small bonus, so an unreliable preferred route cannot stay on top.
         reliability = state.get("success_ewma", 1)
         age = max(0, datetime.now(timezone.utc).timestamp() * 1000 - state.get("updated", 0))
         reliability = 1 - (1 - reliability) * max(0, 1 - age / 3600000)
-        result.append({**model, "quality": quality, "score": quality * 100 + reliability * 5,
-                       "quality_tier": int(quality * 10), "reliability": reliability,
+        result.append({**model, "quality": quality, "score": quality * 100 + reliability * 25 + (2 if model["id"] == preferred else 0),
+                       "reliability": reliability,
                        "trials": row["trials"]})
-    result.sort(key=lambda m: (-m["quality_tier"], m["id"] != preferred, -m["score"], m["id"]))
+    result.sort(key=lambda m: (-m["score"], m["id"] != preferred, m["id"]))
     return result

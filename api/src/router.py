@@ -380,7 +380,6 @@ class Router:
         catalog = await self.candidates(data)
         if data["model"] == "auto":
             candidates = [m for m in catalog if m["id"] not in data.get("avoid_models", [])]
-            candidates = candidates[:35]
         else:
             candidates = [m for m in catalog if m["id"] == data["model"]]
         if not candidates:
@@ -396,7 +395,7 @@ class Router:
         context_skipped = []
         notices = []
         try:
-            for candidate in candidates:
+            for index, candidate in enumerate(candidates):
                 source = candidate.get("source", "openrouter")
                 if source in blocked:
                     continue
@@ -450,7 +449,7 @@ class Router:
                             shortest_wait = delay if shortest_wait is None else min(shortest_wait, delay)
                         # Try the independent pool first. Only the last remaining
                         # pool waits, and only a bounded time within this request.
-                        alternatives = any(m.get("source", "openrouter") != source and m.get("source", "openrouter") not in blocked for m in candidates)
+                        alternatives = any(m.get("source", "openrouter") != source and m.get("source", "openrouter") not in blocked for m in candidates[index + 1:])
                         if not self.evaluation and permit.get("scope") != "model" and not alternatives and 0 < delay <= MAX_CAPACITY_WAIT - waited and delay + 2 < self.remaining():
                             yield {"type": "model", "model": model["id"], "retry": True, "notice": f"Free capacity is busy. Retrying in {delay}s…"}
                             await self.sleep(delay + random.uniform(.05, .25))
@@ -465,7 +464,8 @@ class Router:
                     # Reserve fallback time when there are other qualified routes.
                     # With one route, give it the normal response window instead
                     # of aborting early for a fallback that does not exist.
-                    timeout = min(AUTO_ATTEMPT_SECONDS if auto and len(candidates) > 1 else PINNED_ATTEMPT_SECONDS, self.remaining())
+                    alternatives = any(m.get("source", "openrouter") not in blocked for m in candidates[index + 1:])
+                    timeout = min(AUTO_ATTEMPT_SECONDS if auto and alternatives else PINNED_ATTEMPT_SECONDS, self.remaining())
                     selected = {"type": "model", "model": model["id"], "provider": source, "attempt": attempts,
                                 "context": {k: v for k, v in fit.items() if k != "endpoints"}}
                     if context_skipped:

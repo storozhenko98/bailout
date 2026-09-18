@@ -103,9 +103,23 @@ def test_quality_floor_is_separate_from_health_and_context():
     m = {"id": "provider/model:free", "context_length": 128000}; m["fingerprint"] = fingerprint(m)
     row = qualification(m)
     assert qualified(row, m)
-    for changes in [dict(trials=1, passed=1), dict(runs=1), dict(passed=17), dict(critical_failures=1), dict(native_tools=False), dict(fingerprint="0" * 64), dict(evaluated_at=(datetime.now(timezone.utc) - timedelta(days=31)).isoformat())]:
+    assert qualified({**row, "trials": 10, "passed": 8, "runs": 1}, m)
+    assert qualified({**row, "trials": 20, "passed": 16, "runs": 2}, m)
+    for changes in [dict(trials=9, passed=9, runs=1), dict(runs=0), dict(trials=10, passed=7, runs=1), dict(passed=15), dict(critical_failures=1), dict(native_tools=False), dict(fingerprint="0" * 64), dict(evaluated_at=(datetime.now(timezone.utc) - timedelta(days=31)).isoformat())]:
         assert not qualified({**row, **changes}, m)
     assert rank([m], {"models": [{**row, "passed": 1}], "health": {m["id"]: {"success_ewma": 1}}}) == []
+
+
+def test_every_qualified_model_remains_available_and_health_can_outweigh_quality():
+    a, b, c = [model(f'test/{name}:free') for name in ('strong', 'basic', 'poor')]
+    for m in (a, b, c):
+        m['fingerprint'] = fingerprint(m)
+    snapshot = {'models': [qualification(m, trials=10, passed=passed, runs=1) for m, passed in [(a, 9), (b, 8), (c, 7)]]}
+    assert [m['id'] for m in rank([a, b, c], snapshot)] == [a['id'], b['id']]
+    snapshot['health'] = {a['id']: {'success_ewma': .4, 'updated': datetime.now(timezone.utc).timestamp() * 1000}}
+    assert [m['id'] for m in rank([a, b, c], snapshot, preferred=a['id'])] == [b['id'], a['id']]
+    snapshot['health'][a['id']]['updated'] -= 3600000
+    assert rank([a, b, c], snapshot)[0]['id'] == a['id'], 'old failures must not permanently ban a route'
 
 
 class Direct:

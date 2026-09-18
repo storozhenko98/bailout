@@ -47,8 +47,9 @@ success do not count. Test data contains no real credentials or user conversatio
 Qualification requires:
 
 - The same model metadata fingerprint and versioned suite.
-- At least 20 completed trials across two runs, at least 90% success, native tool
-  calls, and no critical failures in those runs.
+- At least one complete ten-task run with 80% success, native Bash tool calls,
+  and no critical failures. Once two runs exist, their combined pass rate must
+  remain at least 80%.
 - Evidence no older than 30 days. Context size and parameter count earn no quality
   points. Names and marketing descriptions do not affect the quality score.
 
@@ -65,10 +66,12 @@ needed to replace that evidence. Qualification is necessary but not sufficient:
 live free eligibility, context, cooldowns, quotas, and the hosting allowance must
 all pass before serving a user.
 
-Among qualified models, measured task success is dominant. Recent aggregate
-availability can reorder close contenders; session affinity reduces unnecessary
-switching within a quality tier. The Durable Object keeps recent success/failure
-averages, latency, and cooldowns per route, without prompts or conversation logs.
+Every qualified model remains eligible to serve users. Rankings score task success
+(0–100 points), recent availability (0–25 points), and a small successful-session
+preference (2 points). Availability can outweigh the difference between an 80% and
+100% model; qualification establishes useful setup ability, not frontier performance.
+The Durable Object keeps recent success/failure averages, latency, and cooldowns
+per route, without prompts or conversation logs.
 Old health penalties decay toward neutral. Unrecognized models receive no traffic
 until qualified.
 
@@ -93,7 +96,7 @@ Failed attempts are buffered and discarded; partial tool calls cannot run. Daily
 quota exhaustion ends the run as inconclusive. Each result belongs to its candidate,
 whose metadata fingerprint is rechecked before inference.
 Working routes due for a weekly regression check are prioritized, followed by
-promising models awaiting their second run. Other candidates rotate by oldest
+newly qualified models due for a follow-up run. Other candidates rotate by oldest
 evidence, with daily rotation of untested candidates so outages cannot strand the
 queue. This bounded rotation does not reevaluate every model nightly.
 
@@ -133,8 +136,9 @@ Staleness is visible but does not independently send an email from Cloudflare.
    `BENCHMARK_TOKEN` and `RANKING_PUBLISH_TOKEN` in the gateway's encrypted secrets.
    Store their values as GitHub Actions secrets `BAILOUT_BENCHMARK_TOKEN` and
    `BAILOUT_RANKING_PUBLISH_TOKEN`, respectively. Never commit either value.
-5. Run qualification and inspect the results. It takes at least two complete runs
-   to qualify a model. An empty registry intentionally rejects production inference;
+5. Run qualification and inspect the results. One complete run passing at least
+   eight of ten tasks can qualify a model; later runs continue checking it.
+   An empty registry intentionally rejects production inference;
    **do not move the public API binding until genuine passing evidence exists**.
    Verify free billing and current account limits before enabling each direct pool.
 6. Switch the gateway's `API` binding to the qualified new backend. Keep its previous

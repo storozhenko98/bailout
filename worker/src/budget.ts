@@ -5,11 +5,11 @@ export const POLICY = Object.freeze({
   attemptMicroUsd: 10,
   forwardMicroUsd: 300, // Python CPU plus bounded provider reservations/retries.
   windowHours: 31 * 24,
-  clientMinute: 30,
-  clientHour: 300,
-  clientDay: 1000,
-  globalMinute: 120,
-  chatMinute: 60, // Admissions only; each upstream attempt has its own shared gate.
+  clientMinute: 60,
+  clientHour: 600,
+  clientDay: 2000,
+  globalMinute: 240,
+  chatMinute: 120, // Admissions only; each upstream attempt has its own shared gate.
 });
 export const DOCS = 'https://bailout.dev/docs/#service-limits';
 export function refusal(code: string, error: string, seconds = 60, status = 429, now = Date.now()) {
@@ -65,9 +65,10 @@ export class BudgetLedger {
         if (c[window] !== stamp) { c[window] = stamp; c[window + 'Count'] = 0; }
       }
       // Only the authenticated operator route can use this kind. Its separate
-      // daily evaluation meter bounds bootstrap reruns; public IP limits stay
-      // unchanged. Every attempt still reserves hosting and provider capacity.
-      for (const [window, limit, duration] of [['minute', POLICY.clientMinute, 60], ['hour', kind === 'benchmark' ? 1000 : POLICY.clientHour, 3600], ['day', POLICY.clientDay, 86400]] as const) {
+      // daily evaluation meter bounds bootstrap reruns. Raising public limits
+      // must not expand evaluation's 30/minute, 1000/hour and 1000/day allowance.
+      const benchmark = kind === 'benchmark';
+      for (const [window, limit, duration] of [['minute', benchmark ? 30 : POLICY.clientMinute, 60], ['hour', benchmark ? 1000 : POLICY.clientHour, 3600], ['day', benchmark ? 1000 : POLICY.clientDay, 86400]] as const) {
         if (c[window + 'Count'] >= limit) return refusal('client_rate_limited', `This IP address has reached Bailout's ${window === 'day' ? 'daily' : window === 'hour' ? 'hourly' : 'per-minute'} fair-use limit. Wait before retrying.`, (c[window] + 1) * duration - now / 1000, 429, now);
       }
       g.requests++; if (chat) g.chats++;

@@ -224,11 +224,11 @@ def select_candidates(candidates, previous, maximum, timestamp):
         row = previous.get(model["id"], {})
         if row.get("fingerprint") != model["fingerprint"]:
             row = {}
-        good = row.get("passed", 0) >= .9 * max(1, row.get("trials", 0)) and row.get("critical_failures", 0) == 0
+        good = row.get("trials", 0) >= 10 and row.get("passed", 0) >= .8 * row["trials"] and row.get("critical_failures", 0) == 0
         evaluated = row.get("evaluated_at", "")
-        overdue = good and row.get("runs", 0) >= 2 and evaluated and (now - datetime.fromisoformat(evaluated)).total_seconds() >= 7 * 86400
-        promising = good and row.get("runs") == 1
-        return (0 if overdue else 1 if promising else 2, evaluated)
+        overdue = good and evaluated and (now - datetime.fromisoformat(evaluated)).total_seconds() >= 7 * 86400
+        followup = good and row.get("runs") == 1
+        return (0 if overdue else 1 if followup else 2, evaluated)
     return sorted(ordered, key=priority)[:maximum]
 
 
