@@ -32,6 +32,19 @@ def stream_answer(text="Recovered"):
     return Response(None, raw=sse(dict(choices=[dict(delta=dict(content=text), finish_reason="stop")], usage=dict(cost=0))))
 
 
+def test_vercel_upgrade_copy_does_not_turn_temporary_model_limits_into_account_exhaustion():
+    failure = policy.upstream_failure(429, {'error': {'type': 'rate_limit_exceeded',
+        'message': 'Rate limit exceeded. Add credits to increase your rate limits.'}}, 'vercel')
+    assert failure.code == 'upstream_rate_limited' and failure.scope == 'model'
+    assert failure.retry_after_seconds is None
+    budget = policy.upstream_failure(402, {'error': {'type': 'quota_for_entity_exceeded'}}, 'vercel')
+    assert budget.code == 'upstream_quota' and budget.scope == 'provider'
+    exhausted = policy.upstream_failure(429, {'error': {'message': 'Daily model limit reached'}}, 'vercel')
+    assert exhausted.code == 'upstream_quota' and exhausted.scope == 'model'
+    exhausted = policy.upstream_failure(429, {'error': {'message': 'Account has insufficient credits'}}, 'vercel')
+    assert exhausted.code == 'upstream_quota' and exhausted.scope == 'provider'
+
+
 async def test_zai_streamed_business_error_keeps_its_meaning():
     response = Response(None, raw=sse(dict(error=dict(code='1113', message='private prompt'))))
     with pytest.raises(Failure) as caught:

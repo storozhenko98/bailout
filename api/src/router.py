@@ -78,7 +78,7 @@ def upstream_failure(status, result, source=None):
     metadata = error.get("metadata") or {}
     if not isinstance(metadata, dict):
         metadata = {}
-    kind = metadata.get("error_type")
+    kind = metadata.get("error_type") or error.get("type")
     code = error.get("code")
     if source == "zai" and re.fullmatch(r"\d{4}", str(code)):
         # ZAI uses HTTP 429 for balance/plan failures as well as overload.
@@ -110,18 +110,24 @@ def upstream_failure(status, result, source=None):
     if status == 429 or kind == "rate_limit_exceeded":
         # An ambiguous 429 is not proof the whole account is exhausted. Allow
         # one delayed retry, then another model, all through the shared meter.
-        source = str(metadata.get("limit_source", "")).lower()
+        limit_source = str(metadata.get("limit_source", "")).lower()
         scope = str(metadata.get("scope", "")).lower()
         message = str(error.get("message", "")).lower()
-        global_limit = (source.startswith("openrouter") or scope in {"account", "key", "global"}
-                        or any(s in message for s in ("daily", "per day", "per-day", "account", "api key", "credits")))
+        # Upgrade suggestions can mention credits on a temporary 429. Only
+        # explicit exhaustion is evidence of a depleted account. Vercel's free
+        # tier throttles individual models; a sibling may still be available.
+        depleted_balance = (kind in {"insufficient_quota", "insufficient_credits", "credit_balance_exhausted"}
+                            or bool(re.search(r"(?:insufficient|exhausted|no remaining|out of) credits?\b|credits? (?:balance )?(?:is )?(?:exhausted|depleted)", message)))
+        exhausted = (any(s in message for s in ("daily", "per day", "per-day"))
+                     or "daily" in limit_source or kind == "daily_limit_exceeded" or depleted_balance)
+        global_limit = (limit_source.startswith("openrouter") or scope in {"account", "key", "global"}
+                        or any(s in message for s in ("account", "api key"))
+                        or depleted_balance or exhausted and source != "vercel")
         provider_limit = (bool(metadata.get("provider_name")) and not global_limit
-                          and source in {"", "provider", "provider_rate_limit"} and scope in {"", "provider", "model"})
-        exhausted = (any(s in message for s in ("daily", "per day", "per-day", "credits"))
-                     or "daily" in source or kind == "daily_limit_exceeded")
+                          and limit_source in {"", "provider", "provider_rate_limit"} and scope in {"", "provider", "model"})
         failure = Failure(429, "Free model capacity is temporarily busy. No paid fallback was used.",
                           code="upstream_quota" if exhausted else "provider_rate_limited" if provider_limit else "upstream_rate_limited",
-                          recoverable=True, scope="provider" if global_limit or exhausted else "model")
+                          recoverable=True, scope="provider" if global_limit else "model")
         if exhausted:
             failure.retry_after_seconds = 3600
         return failure
