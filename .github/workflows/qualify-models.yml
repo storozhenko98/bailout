@@ -29,6 +29,7 @@ on:
         default: ''
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: model-qualification-${{ inputs.progress_group || 'nightly' }}
   cancel-in-progress: false
@@ -46,6 +47,25 @@ jobs:
         run: docker build -t bailout-evaluation:local -f bench/Dockerfile .
       - name: Verify benchmark fixtures and isolation
         run: BAILOUT_TEST_DOCKER=1 python3 bench/test_bench.py
+      - name: Locate an exact legacy checkpoint group
+        id: legacy
+        if: inputs.diagnose_task == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BAILOUT_PROGRESS_GROUP: ${{ inputs.progress_group || 'nightly' }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          group = os.environ['BAILOUT_PROGRESS_GROUP']
+          if not re.fullmatch(r'[a-z0-9_-]{1,48}', group):
+              raise SystemExit('Invalid checkpoint group')
+          rows = json.loads(subprocess.check_output(['gh', 'cache', 'list', '--key', f'qualification-{group}-',
+              '--limit', '100', '--json', 'key,createdAt'], text=True))
+          exact = re.compile('qualification-' + re.escape(group) + r'-[0-9a-f]{64}-\d+-\d+')
+          rows = sorted((r for r in rows if exact.fullmatch(r['key'])), key=lambda r: r['createdAt'], reverse=True)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print('key=' + (rows[0]['key'] if rows else ''), file=output)
+          PY
       - uses: actions/cache/restore@v4
         if: inputs.diagnose_task == ''
         with:
@@ -54,7 +74,7 @@ jobs:
           restore-keys: |
             qualification-v2:${{ inputs.progress_group || 'nightly' }}:${{ hashFiles('src/**', 'bench/**') }}:
             qualification-v2:${{ inputs.progress_group || 'nightly' }}:
-            qualification-${{ inputs.progress_group || 'nightly' }}-${{ hashFiles('src/**', 'bench/**') }}-
+            ${{ steps.legacy.outputs.key }}
       - name: Evaluate synthetic setup and repair tasks
         id: evaluation
         continue-on-error: true
