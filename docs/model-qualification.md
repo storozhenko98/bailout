@@ -66,6 +66,13 @@ needed to replace that evidence. Qualification is necessary but not sufficient:
 live free eligibility, context, cooldowns, quotas, and the hosting allowance must
 all pass before serving a user.
 
+The September 18 validator correction accepts equivalent shell quoting and PATHs
+built with variables, using the existing executable checks to decide correctness.
+For unfinished v0.7.3 checkpoints only, valid passes and unrelated failures remain;
+noncritical PATH/shell failures are rechecked. This migration is restricted to the
+exact old/new harness-and-fixture signatures. Completed published suites are never
+reused as fresh evidence, and critical failures are retained.
+
 Every qualified model remains eligible to serve users. Rankings score task success
 (0–100 points), recent availability (0–25 points), additional test evidence (up to
 2 points after a second complete run), and a small successful-session preference

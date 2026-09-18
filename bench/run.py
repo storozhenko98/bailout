@@ -275,6 +275,23 @@ def checkpoint_signature():
 def load_progress(path, signature):
     try:
         data = json.loads(path.read_text())
+        # v0.7.3's first evaluator rejected valid shell quoting and PATHs built
+        # with variables before running its behavioral checks. Those stricter
+        # passes remain valid; only affected noncritical failures need rescoring.
+        if (signature == 'f4e15608de42906a8769225205a68cc8be25f4a1c3ec6fcba260989b6fdc3efa'
+                and data.get('signature') == '48902c2eab4a5881427ef7a2e14973ebfa10c7d468a2c8ef6186a2224f46fc42'
+                and isinstance(data.get('models'), dict)):
+            for saved in data['models'].values():
+                if not isinstance(saved, dict) or saved.get('complete'):
+                    continue  # Published suites always receive a fresh full run.
+                tasks = saved.get('tasks', {}) if isinstance(saved, dict) else {}
+                if not isinstance(tasks, dict):
+                    continue
+                for task in ('path', 'shell'):
+                    result = tasks.get(task, {})
+                    if isinstance(result, dict) and result.get('passed') is False and result.get('critical') is False:
+                        del tasks[task]
+            data['signature'] = signature
         if data.get('signature') == signature and isinstance(data.get('models'), dict):
             return data
     except (OSError, ValueError, AttributeError):

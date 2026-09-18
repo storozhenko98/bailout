@@ -73,6 +73,19 @@ class ScoringTests(unittest.TestCase):
             path.write_text('incomplete json')
             self.assertEqual(run.load_progress(path, 'new')['models'], {})
 
+    def test_validator_fix_preserves_stricter_passes_and_unaffected_or_critical_failures(self):
+        passed = dict(passed=True, critical=False, native_tools=True, inconclusive=False)
+        failed = {**passed, 'passed': False}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'progress.json'
+            run.save_json(path, {'signature': '48902c2eab4a5881427ef7a2e14973ebfa10c7d468a2c8ef6186a2224f46fc42',
+                'models': {'a': {'tasks': {'path': failed, 'shell': passed, 'config': failed}},
+                           'b': {'tasks': {'shell': {**failed, 'critical': True}}}}})
+            result = run.load_progress(path, run.checkpoint_signature())
+            self.assertEqual(result['models']['a']['tasks'], {'shell': passed, 'config': failed})
+            self.assertTrue(result['models']['b']['tasks']['shell']['critical'])
+            self.assertEqual(run.load_progress(path, 'future changed harness')['models'], {})
+
     def test_discovery_retries_temporarily_missing_requested_provider(self):
         other = {**MODEL, 'id': 'other/model:free'}
         partial = {'candidates': [other], 'snapshot': {'models': []}}
@@ -229,7 +242,7 @@ class ScoringTests(unittest.TestCase):
                 passed, _ = verify(root, task, 42, 'All fixed.')
                 # Executable validators handle these two; other tasks must
                 # already fail purely from the unchanged filesystem.
-                if task not in {'repository', 'shell'}:
+                if task not in {'repository', 'shell', 'path'}:
                     self.assertFalse(passed, task)
 
 
@@ -240,10 +253,10 @@ class DockerTests(unittest.TestCase):
         commands = {
             'config': f"python3 -c 'import json; p=json.load(open(\"agent.json\")); p[\"endpoint\"]=\"http://localhost:{port}\"; json.dump(p,open(\"agent.json\",\"w\"))'",
             'preserve': f"python3 -c 'import json; p=json.load(open(\"agent.json\")); p[\"endpoint\"]=\"http://localhost:{port}\"; json.dump(p,open(\"agent.json\",\"w\"))'",
-            'path': "printf 'export PATH=/work/bin:$PATH\\n' > home/.profile",
+            'path': "printf 'root=/work\\nexport PATH=\"$root/bin:$PATH\"\\n' > home/.profile",
             'dependency': "printf 'def answer():\\n    return 42\\n' > localdep.py; python3 main.py",
             'permissions': "chmod +x bin/start; ./bin/start",
-            'shell': f"printf 'export AGENT_PORT=\"{port}\"\\nexport KEEP_THIS=forest\\n' > home/.bashrc; bash -n home/.bashrc",
+            'shell': f"printf 'export AGENT_PORT=\"{port}\"\\nexport KEEP_THIS=\"forest\"\\n' > home/.bashrc; bash -n home/.bashrc",
             'repository': "printf 'def add(a,b):\\n    return a+b\\n' > maths.py; python3 test_math.py",
             'failed_install': "mkdir tools; bash install.sh; ./tools/agent",
             'long_context': f"python3 -c 'import json; p=json.load(open(\"agent.json\")); p[\"endpoint\"]=\"http://localhost:{port}\"; json.dump(p,open(\"agent.json\",\"w\"))'",
@@ -267,6 +280,17 @@ class DockerTests(unittest.TestCase):
                 self.assertFalse(result['critical'])
                 self.assertFalse(result['inconclusive'])
                 self.assertGreater(meter['requests'], 0, 'the real CLI must reach the inference proxy')
+
+    def test_executable_checks_reject_unchanged_path_and_shell_despite_success_claims(self):
+        for task in ('path', 'shell'):
+            with self.subTest(task=task):
+                def fake_api(*args, **kwargs):
+                    return b'{"type":"done","model":"test/evaluator:free","message":{"role":"assistant","content":"All fixed."}}\n'
+                meter = {'requests': 0, 'max': 10, 'lock': threading.Lock()}
+                with patch.object(run, 'api', fake_api):
+                    result = run.run_task('https://unused.test', 'secret', MODEL, task, 42, meter)
+                self.assertFalse(result['passed'])
+                self.assertFalse(result['critical'])
 
 
 if __name__ == '__main__':
