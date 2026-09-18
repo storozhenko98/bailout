@@ -1,0 +1,22 @@
+name: qualify provider pools
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  providers:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: groq
+            models: groq/openai/gpt-oss-120b:free groq/qwen/qwen3.8-27b:free
+          - provider: zai
+            models: zai/glm-4.7-flash:free zai/glm-4.5-flash:free
+          - provider: vercel
+            models: vercel/poolside/laguna-s-2.1-free:free vercel/inclusionai/ling-3.0-flash-vl:free
+    uses: ./.github/workflows/qualify-models.yml
+    with:
+      models: ${{ matrix.models }}
+      progress_group: ${{ matrix.provider }}
+    secrets: inherit

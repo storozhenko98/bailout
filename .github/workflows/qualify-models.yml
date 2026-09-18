@@ -1,5 +1,13 @@
 name: qualify free models
 on:
+  workflow_call:
+    inputs:
+      models:
+        type: string
+        default: ''
+      progress_group:
+        type: string
+        default: 'nightly'
   schedule:
     - cron: '17 9 * * *'
   workflow_dispatch:
@@ -11,12 +19,14 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: model-qualification
+  group: model-qualification-${{ inputs.progress_group || 'nightly' }}
   cancel-in-progress: false
 jobs:
   evaluate:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    outputs:
+      rankings: ${{ steps.results.outputs.rankings }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,7 +35,14 @@ jobs:
         run: docker build -t bailout-evaluation:local -f bench/Dockerfile .
       - name: Verify benchmark fixtures and isolation
         run: BAILOUT_TEST_DOCKER=1 python3 bench/test_bench.py
+      - uses: actions/cache/restore@v4
+        with:
+          path: artifacts/qualification-progress.json
+          key: qualification-${{ inputs.progress_group || 'nightly' }}-${{ hashFiles('src/**', 'bench/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: qualification-${{ inputs.progress_group || 'nightly' }}-${{ hashFiles('src/**', 'bench/**') }}-
       - name: Evaluate synthetic setup and repair tasks
+        id: evaluation
+        continue-on-error: true
         env:
           BAILOUT_BENCHMARK_TOKEN: ${{ secrets.BAILOUT_BENCHMARK_TOKEN }}
           BAILOUT_EVAL_MODELS: ${{ inputs.models }}
@@ -35,23 +52,43 @@ jobs:
           models = os.environ.get('BAILOUT_EVAL_MODELS', '').split()
           if len(models) > 2 or any(not re.fullmatch(r'[\w.-]+/(?:[\w.-]+/)*[\w.-]+:free', m) for m in models):
               raise SystemExit('Use at most two exact free candidate IDs')
-          args = ['python3', 'bench/run.py', '--skip-build', '--max-models', '2', '--max-requests', '80']
+          args = ['python3', 'bench/run.py', '--skip-build', '--max-models', '2', '--max-requests', '160', '--checkpoint', 'artifacts/qualification-progress.json']
           subprocess.run(args + (['--models', *models] if models else []), check=True)
           PY
+      - name: Preserve completed evidence
+        id: results
+        if: always()
+        run: |
+          if test -f artifacts/rankings.json; then
+            echo 'rankings=true' >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: model-qualification
-          path: artifacts/rankings.json
+          name: model-qualification-${{ inputs.progress_group || 'nightly' }}
+          path: |
+            artifacts/rankings.json
+            artifacts/qualification-report.json
+            artifacts/qualification-progress.json
           retention-days: 7
-          if-no-files-found: error
+          if-no-files-found: warn
+      - uses: actions/cache/save@v4
+        if: always() && hashFiles('artifacts/qualification-progress.json') != ''
+        with:
+          path: artifacts/qualification-progress.json
+          key: qualification-${{ inputs.progress_group || 'nightly' }}-${{ hashFiles('src/**', 'bench/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Report incomplete evaluation
+        if: steps.evaluation.outcome == 'failure'
+        run: exit 1
   publish:
     needs: evaluate
+    if: always() && needs.evaluate.outputs.rankings == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: model-qualification
+          name: model-qualification-${{ inputs.progress_group || 'nightly' }}
       - name: Publish validated ranking atomically
         env:
           BAILOUT_RANKING_PUBLISH_TOKEN: ${{ secrets.BAILOUT_RANKING_PUBLISH_TOKEN }}

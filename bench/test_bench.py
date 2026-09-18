@@ -18,6 +18,45 @@ NOW = datetime.now(timezone.utc).isoformat()
 
 
 class ScoringTests(unittest.TestCase):
+    def test_checkpoint_resumes_outage_without_repeating_passes_or_scored_failures(self):
+        calls = []
+        recovering = [False]
+        def task(base, token, model, task, seed, meter):
+            calls.append(task)
+            meter['requests'] += 1
+            return dict(passed=task not in ('path', 'dependency'), critical=False, native_tools=True,
+                        inconclusive=task == 'dependency' and not recovering[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            output, checkpoint = Path(tmp) / 'rankings.json', Path(tmp) / 'progress.json'
+            arguments = ['run.py', '--skip-build', '--output', str(output), '--checkpoint', str(checkpoint)]
+            with patch('sys.argv', arguments), patch.dict(os.environ, BAILOUT_BENCHMARK_TOKEN='x' * 40), \
+                 patch.object(run, 'api', return_value=json.dumps({'candidates': [MODEL], 'snapshot': {'models': []}}).encode()), \
+                 patch.object(run, 'run_task', side_effect=task), \
+                 patch.object(run.subprocess, 'check_output', return_value='a' * 40), patch('builtins.print'):
+                with self.assertRaises(SystemExit):
+                    run.main()
+                self.assertFalse(output.exists())
+                saved = json.loads(checkpoint.read_text())['models'][MODEL['id']]['tasks']
+                self.assertEqual(set(saved), {'config', 'path'})
+                self.assertFalse(saved['path']['passed'])
+                recovering[0] = True
+                calls.clear()
+                run.main()
+                self.assertEqual(calls, list(TASKS[2:]))
+                row = json.loads(output.read_text())['models'][0]
+                self.assertEqual((row['trials'], row['passed']), (10, 8))
+                calls.clear()
+                run.main()
+                self.assertEqual(calls, list(TASKS), 'a complete suite must not be published again as fresh evidence')
+
+    def test_progress_cannot_cross_a_changed_harness_or_corrupt_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'progress.json'
+            run.save_json(path, {'signature': 'old', 'models': {'unsafe': {}}})
+            self.assertEqual(run.load_progress(path, 'new')['models'], {})
+            path.write_text('incomplete json')
+            self.assertEqual(run.load_progress(path, 'new')['models'], {})
+
     def test_discovery_retries_temporarily_missing_requested_provider(self):
         other = {**MODEL, 'id': 'other/model:free'}
         partial = {'candidates': [other], 'snapshot': {'models': []}}

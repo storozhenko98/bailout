@@ -15,7 +15,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from tasks import TASKS, CHECKS, prepare, verify
 
@@ -58,7 +58,7 @@ class Proxy(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
 
-TEMPORARY = {"provider_timeout", "provider_unavailable", "upstream_quota", "upstream_rate_limited", "provider_rate_limited", "free_capacity_exhausted", "pricing_unavailable", "capacity_unavailable", "benchmark_quota", "client_rate_limited", "capacity_busy", "service_paused", "budget_exhausted"}
+TEMPORARY = {"provider_timeout", "provider_unavailable", "upstream_quota", "upstream_rate_limited", "provider_rate_limited", "free_capacity_exhausted", "pricing_unavailable", "capacity_unavailable", "benchmark_quota", "client_rate_limited", "capacity_busy", "service_paused", "budget_exhausted", "upstream_authentication", "recovery_exhausted"}
 RETRYABLE = {"upstream_rate_limited", "provider_rate_limited", "free_capacity_exhausted", "client_rate_limited", "capacity_busy", "provider_unavailable", "provider_timeout"}
 
 
@@ -109,8 +109,13 @@ def handler(base, token, candidate, meter, state):
                 for item in events:
                     if item.get("type") == "done":
                         state["native_tools"] |= bool(item.get("message", {}).get("tool_calls"))
+                        # The real CLI can now wait and retry an explicitly
+                        # temporary refusal. A recovered request is conclusive.
+                        state["inconclusive"] = False
                     elif item.get("type") == "error":
-                        state["inconclusive"] |= item.get("code") in TEMPORARY
+                        state["inconclusive"] = item.get("code") in TEMPORARY
+                        state["last_error"] = {key: item.get(key) for key in
+                            ("code", "provider_error_code", "retry_after_seconds")}
                         print(json.dumps({"model": candidate["id"], "error_code": item.get("code"),
                                           "provider_error_code": item.get("provider_error_code"),
                                           "retry_after_seconds": item.get("retry_after_seconds")}), flush=True)
@@ -250,6 +255,28 @@ def select_candidates(candidates, previous, maximum, timestamp):
     return sorted(ordered, key=priority)[:maximum]
 
 
+def checkpoint_signature():
+    paths = [ROOT / 'bench/tasks.py', ROOT / 'bench/Dockerfile', *sorted((ROOT / 'src').glob('*.rs'))]
+    return hashlib.sha256(b''.join(p.read_bytes() for p in paths)).hexdigest()
+
+
+def load_progress(path, signature):
+    try:
+        data = json.loads(path.read_text())
+        if data.get('signature') == signature and isinstance(data.get('models'), dict):
+            return data
+    except (OSError, ValueError, AttributeError):
+        pass
+    return {'signature': signature, 'models': {}}
+
+
+def save_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + '.tmp')
+    temporary.write_text(json.dumps(data, indent=2) + '\n')
+    temporary.replace(path)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--api", default="https://api.bailout.dev")
@@ -258,8 +285,9 @@ def main():
     parser.add_argument("--max-models", type=int, default=2)
     parser.add_argument("--models", nargs="*")
     parser.add_argument("--skip-build", action="store_true")
+    parser.add_argument("--checkpoint", help="Resume completed tasks after a provider outage; never retry a scored failure")
     args = parser.parse_args()
-    if not args.api.startswith("https://") or not 1 <= args.max_requests <= 100 or not 1 <= args.max_models <= 10:
+    if not args.api.startswith("https://") or not 1 <= args.max_requests <= 160 or not 1 <= args.max_models <= 10:
         parser.error("HTTPS and bounded evaluation limits required")
     token = os.environ.get("BAILOUT_BENCHMARK_TOKEN", "")
     if len(token) < 32:
@@ -276,31 +304,59 @@ def main():
     run_id = os.environ.get("GITHUB_RUN_ID", str(time.time_ns())) + "-" + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
     deadline = time.monotonic() + 45 * 60
     output = []
+    reports = []
+    progress_path = Path(args.checkpoint) if args.checkpoint else None
+    signature = checkpoint_signature()
+    progress = load_progress(progress_path, signature) if progress_path else {'signature': signature, 'models': {}}
+    target = Path(args.output)
+    target.unlink(missing_ok=True)  # Never publish an artifact left over from an earlier run.
     for model in candidates:
         # A throttled first provider must not consume the next candidate's
         # entire evaluation allowance. The gateway's daily cap is still shared.
         meter = {"requests": 0, "max": args.max_requests, "lock": threading.Lock()}
+        saved = progress['models'].get(model['id'], {})
+        if (saved.get('fingerprint') != model['fingerprint'] or saved.get('complete')
+                or saved.get('started_at', '') < (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()):
+            saved = {'fingerprint': model['fingerprint'], 'started_at': timestamp, 'run_id': run_id, 'tasks': {}}
+        progress['models'][model['id']] = saved
         results = []
         for task in TASKS:
+            if task in saved['tasks']:
+                result = saved['tasks'][task]
+                if (all(type(result.get(k)) is bool for k in ('passed', 'critical', 'native_tools', 'inconclusive'))
+                        and not result['inconclusive']):
+                    results.append(result)
+                    print(json.dumps({'model': model['id'], 'task': task, 'resumed': True, **result}), flush=True)
+                    continue
             # A task can take at most seven minutes. Stop starting tasks at
             # 45 minutes so the 60-minute job still uploads completed evidence.
             if meter["requests"] >= meter["max"] or time.monotonic() >= deadline:
                 break
-            seed = int.from_bytes(hashlib.sha256((run_id + model["id"] + task).encode()).digest()[:4])
+            seed = int.from_bytes(hashlib.sha256((saved['run_id'] + model["id"] + task).encode()).digest()[:4])
             result = run_task(args.api, token, model, task, seed, meter)
             results.append(result)
             print(json.dumps({"model": model["id"], "task": task, **result,
                               "requests_used": meter["requests"], "request_limit": meter["max"]}), flush=True)
+            if not result['inconclusive'] or result['critical']:
+                saved['tasks'][task] = {**result, 'inconclusive': False}
+            if progress_path:
+                save_json(progress_path, progress)
             if result["inconclusive"]:
                 break
-        row = accumulate(model, results, previous.get(model["id"]), timestamp)
+        row = accumulate(model, results, previous.get(model["id"]), datetime.now(timezone.utc).isoformat())
         if row:
             output.append(row)
+            saved['complete'] = len(results) == len(TASKS) and not any(r['inconclusive'] for r in results)
+        reports.append({'id': model['id'], 'fingerprint': model['fingerprint'], 'tasks': dict(zip(TASKS, results)),
+                        'requests_used': meter['requests'], 'complete': saved.get('complete', False)})
+        if progress_path:
+            save_json(progress_path, progress)
+        save_json(target.with_name('qualification-report.json'), {'generated_at': datetime.now(timezone.utc).isoformat(), 'models': reports})
+        if output:
+            save_json(target, {"schema": 1, "suite": SUITE, "generated_at": datetime.now(timezone.utc).isoformat(), "run_id": run_id,
+                "harness_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(), "models": output})
     if not output:
         raise SystemExit("No complete qualification results. Last valid production ranking is unchanged.")
-    target = Path(args.output); target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps({"schema": 1, "suite": SUITE, "generated_at": datetime.now(timezone.utc).isoformat(), "run_id": run_id,
-        "harness_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(), "models": output}, indent=2) + "\n")
 
 
 if __name__ == "__main__":
