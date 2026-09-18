@@ -18,6 +18,22 @@ NOW = datetime.now(timezone.utc).isoformat()
 
 
 class ScoringTests(unittest.TestCase):
+    def test_parallel_provider_jobs_have_distinct_publication_ids(self):
+        with patch.dict(os.environ, GITHUB_RUN_ID='1234', GITHUB_RUN_ATTEMPT='1'):
+            other = {**MODEL, 'id': 'other/model:free'}
+            self.assertNotEqual(run.qualification_run_id([MODEL]), run.qualification_run_id([other]))
+            self.assertEqual(run.qualification_run_id([MODEL, other]), run.qualification_run_id([other, MODEL]))
+
+    def test_nightly_prioritizes_valid_unfinished_evidence_over_new_discoveries(self):
+        candidates = [{**MODEL, 'id': f'test/{i}:free'} for i in range(10)]
+        saved = {'fingerprint': MODEL['fingerprint'], 'run_id': 'old-run', 'started_at': NOW,
+                 'tasks': {'config': dict(passed=False, critical=False, native_tools=True, inconclusive=False)}}
+        progress = {'models': {candidates[-1]['id']: saved}}
+        self.assertEqual(run.select_candidates(candidates, {}, 1, NOW, progress), [candidates[-1]])
+        saved['fingerprint'] = 'changed'
+        self.assertFalse(run.resumable(saved, candidates[-1], NOW))
+        self.assertFalse(run.resumable([], candidates[-1], NOW))
+
     def test_checkpoint_resumes_outage_without_repeating_passes_or_scored_failures(self):
         calls = []
         recovering = [False]

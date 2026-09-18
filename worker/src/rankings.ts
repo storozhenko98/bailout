@@ -61,7 +61,8 @@ export class Rankings {
     return this.storage.transactionSync(() => {
       const previous = this.snapshot(now);
       if (previous.run_id === next.run_id) return { ok: true, unchanged: true };
-      if (previous.generated_at && Date.parse(next.generated_at) <= Date.parse(previous.generated_at)) throw new Error('Older ranking snapshot');
+      // Independent provider jobs can finish publishing out of order. Freshness
+      // belongs to each model's evidence, not the envelope arrival order.
       // An incomplete evaluation run cannot erase untested models. Quality
       // evidence expires independently; pricing is always checked live.
       const merged = new Map(previous.models.filter(r => now - Date.parse(r.evaluated_at) <= 30 * 86400000).map(r => [r.id, r]));
@@ -71,7 +72,7 @@ export class Rankings {
         merged.set(row.id, row);
       }
       if (merged.size > 100) throw new Error('Too many models');
-      const saved = { ...next, models: [...merged.values()] };
+      const saved = { ...next, generated_at: previous.generated_at && Date.parse(previous.generated_at) > Date.parse(next.generated_at) ? previous.generated_at : next.generated_at, models: [...merged.values()] };
       if (previous.run_id) this.storage.sql.exec('INSERT INTO model_rankings VALUES (2, ?) ON CONFLICT(id) DO UPDATE SET value = excluded.value', JSON.stringify({ ...previous, health: undefined, stale: undefined }));
       this.storage.sql.exec('INSERT INTO model_rankings VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET value = excluded.value', JSON.stringify(saved));
       return { ok: true, models: saved.models.length };

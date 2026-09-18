@@ -26,7 +26,7 @@ test('ranking publication is atomic, ordered, idempotent and retains untested mo
   assert.equal(new Rankings(db).snapshot(now).models.length, 1);
   assert.deepEqual(r.publish(manifest(), now), { ok: true, unchanged: true });
   assert.throws(() => r.publish({ ...manifest(), models: [] }, now));
-  assert.throws(() => r.publish(manifest('test/b:free', now - 1000, 'old'), now));
+  assert.throws(() => r.publish(manifest('test/a:free', now - 1000, 'old'), now));
   r.publish(manifest('test/b:free', now + 1, '2'), now + 1);
   assert.equal(r.snapshot(now).models.length, 2);
   assert.equal(r.snapshot(now + 49 * 3600000).stale, true);
@@ -52,6 +52,16 @@ test('a newly generated envelope cannot roll a model back to older evidence', ()
   independent.models[0].evaluated_at = new Date(now - 1000).toISOString();
   r.publish(independent, now + 20);
   assert.equal(r.snapshot(now + 20).models.length, 2);
+});
+
+test('parallel provider batches can publish out of order without losing evidence or freshness', () => {
+  const r = new Rankings(storage());
+  r.publish(manifest('test/a:free', now, 'run-groq'), now);
+  r.publish(manifest('test/b:free', now - 1000, 'run-zai'), now);
+  r.publish(manifest('test/c:free', now + 1, 'run-vercel'), now + 1);
+  assert.equal(r.snapshot(now + 1).models.length, 3);
+  assert.equal(r.snapshot(now + 1).generated_at, new Date(now + 1).toISOString());
+  assert.throws(() => r.publish(manifest('test/b:free', now - 2000, 'stale'), now + 1));
 });
 
 test('verified per-model quotas preserve independent pools but retain shared concurrency and cooldown', () => {

@@ -43,7 +43,9 @@ jobs:
         with:
           path: artifacts/qualification-progress.json
           key: qualification-${{ inputs.progress_group || 'nightly' }}-${{ hashFiles('src/**', 'bench/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: qualification-${{ inputs.progress_group || 'nightly' }}-${{ hashFiles('src/**', 'bench/**') }}-
+          restore-keys: |
+            qualification-${{ inputs.progress_group || 'nightly' }}-${{ hashFiles('src/**', 'bench/**') }}-
+            qualification-${{ inputs.progress_group || 'nightly' }}-
       - name: Evaluate synthetic setup and repair tasks
         id: evaluation
         continue-on-error: true

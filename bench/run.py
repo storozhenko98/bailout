@@ -234,7 +234,23 @@ def accumulate(model, results, previous, timestamp):
             "native_tools": any(r["native_tools"] for r in results), "evaluated_at": timestamp}
 
 
-def select_candidates(candidates, previous, maximum, timestamp):
+def resumable(saved, model, timestamp):
+    if not isinstance(saved, dict) or not isinstance(saved.get('tasks'), dict):
+        return False
+    try:
+        age = (datetime.fromisoformat(timestamp) - datetime.fromisoformat(saved['started_at'])).total_seconds()
+        return (saved.get('fingerprint') == model['fingerprint'] and not saved.get('complete')
+                and 0 <= age <= 48 * 3600 and isinstance(saved.get('run_id'), str))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def qualification_run_id(candidates):
+    batch = hashlib.sha256('\n'.join(sorted(m['id'] for m in candidates)).encode()).hexdigest()[:12]
+    return os.environ.get('GITHUB_RUN_ID', str(time.time_ns())) + '-' + os.environ.get('GITHUB_RUN_ATTEMPT', '1') + '-' + batch
+
+
+def select_candidates(candidates, previous, maximum, timestamp, progress=None):
     now = datetime.fromisoformat(timestamp)
     # Rotate equal-age discoveries each day even if an outage prevents writing
     # evidence. Otherwise two permanently unavailable newcomers could monopolize
@@ -251,7 +267,9 @@ def select_candidates(candidates, previous, maximum, timestamp):
         evaluated = row.get("evaluated_at", "")
         overdue = good and evaluated and (now - datetime.fromisoformat(evaluated)).total_seconds() >= 7 * 86400
         followup = good and row.get("runs") == 1
-        return (0 if overdue else 1 if followup else 2, evaluated)
+        saved = (progress or {}).get('models', {}).get(model['id'], {})
+        resume = resumable(saved, model, timestamp) and bool(saved['tasks'])
+        return (0 if overdue else 1 if resume else 2 if followup else 3, evaluated)
     return sorted(ordered, key=priority)[:maximum]
 
 
@@ -297,17 +315,19 @@ def main():
     catalog = discover_candidates(args.api, token, args.models)
     previous = {m["id"]: m for m in catalog["snapshot"]["models"]}
     candidates = catalog["candidates"]
-    if args.models:
-        candidates = [m for m in candidates if m["id"] in args.models]
     timestamp = datetime.now(timezone.utc).isoformat()
-    candidates = select_candidates(candidates, previous, args.max_models, timestamp)
-    run_id = os.environ.get("GITHUB_RUN_ID", str(time.time_ns())) + "-" + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
-    deadline = time.monotonic() + 45 * 60
-    output = []
-    reports = []
     progress_path = Path(args.checkpoint) if args.checkpoint else None
     signature = checkpoint_signature()
     progress = load_progress(progress_path, signature) if progress_path else {'signature': signature, 'models': {}}
+    if args.models:
+        by_id = {m['id']: m for m in candidates}
+        candidates = [by_id[id] for id in dict.fromkeys(args.models) if id in by_id][:args.max_models]
+    else:
+        candidates = select_candidates(candidates, previous, args.max_models, timestamp, progress)
+    run_id = qualification_run_id(candidates)
+    deadline = time.monotonic() + 45 * 60
+    output = []
+    reports = []
     target = Path(args.output)
     target.unlink(missing_ok=True)  # Never publish an artifact left over from an earlier run.
     for model in candidates:
@@ -315,8 +335,7 @@ def main():
         # entire evaluation allowance. The gateway's daily cap is still shared.
         meter = {"requests": 0, "max": args.max_requests, "lock": threading.Lock()}
         saved = progress['models'].get(model['id'], {})
-        if (saved.get('fingerprint') != model['fingerprint'] or saved.get('complete')
-                or saved.get('started_at', '') < (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()):
+        if not resumable(saved, model, timestamp):
             saved = {'fingerprint': model['fingerprint'], 'started_at': timestamp, 'run_id': run_id, 'tasks': {}}
         progress['models'][model['id']] = saved
         results = []
