@@ -1,7 +1,7 @@
 import type { Env, HttpResult } from "./types.js";
 import { BudgetLedger, POLICY, budgetRefusal, refusal } from './budget.js';
 import { PublicStats, publicStatsResponse } from './stats.js';
-import { CapacityLedger, PROVIDERS } from './capacity.js';
+import { CapacityLedger, PROVIDERS, type QueueRoute } from './capacity.js';
 import { Rankings } from './rankings.js';
 
 export class BudgetGuard {
@@ -23,11 +23,14 @@ export class BudgetGuard {
       catch { return Response.json({ error: 'Invalid or older ranking snapshot.' }, { status: 400 }); }
     }
     if (path.startsWith('/capacity/') && request.method === 'POST') {
-      const data = await request.json() as { provider: string; model: string | null; tokens: number; permit: string; seconds: number; outcome: string; latency_ms: number; quota?: { rpm: number; rpd: number; tpm: number; tpd: number } };
+      const data = await request.json() as { provider: string; model: string | null; tokens: number; permit: string; seconds: number; outcome: string; latency_ms: number; ticket?: string; routes: QueueRoute[]; quota?: { rpm: number; rpd: number; tpm: number; tpd: number } };
       if (path === '/capacity/benchmark') return response(this.capacity.benchmark());
       if (path === '/capacity/rankings') return Response.json(this.rankings.snapshot());
       if (path === '/capacity/outcome') { this.rankings.record(data.model!, data.outcome, data.latency_ms); return Response.json({ ok: true }); }
-      if (path === '/capacity/reserve') return Response.json(this.capacity.reserve(data.provider, data.model!, data.tokens, Date.now(), data.quota));
+      if (path === '/capacity/join') return Response.json(this.capacity.join(data.ticket!, data.routes));
+      if (path === '/capacity/peek') return Response.json(this.capacity.peek(data.ticket!));
+      if (path === '/capacity/leave') { this.capacity.leave(data.ticket!); return Response.json({ ok: true }); }
+      if (path === '/capacity/reserve') return Response.json(this.capacity.reserve(data.provider, data.model!, data.tokens, Date.now(), data.quota, data.ticket));
       if (path === '/capacity/settle') this.capacity.settle(data.permit, data.tokens);
       else if (path === '/capacity/cooldown') this.capacity.cooldown(data.provider, data.model, data.seconds);
       else return new Response(null, { status: 404 });

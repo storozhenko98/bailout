@@ -52,10 +52,37 @@ the four-attempt and total-time bounds still apply.
 Busy routes get shared cooldowns, so the next user benefits from earlier failures.
 The terminal also keeps a successful-model preference and short failure hints in
 memory. Neither hints nor caller-supplied model IDs can override price checks,
-provider quotas or the hosting budget. Short capacity waits total at most 20
-seconds; other configured pools are tried first. If all free pools are unavailable,
+provider quotas or the hosting budget. If all compatible pools are busy, production
+requests enter bounded fair waiting. If none becomes usable within that wait,
 return `free_capacity_exhausted` with the known retry delay. This is best-effort
 capacity, not a guarantee of a free response or a complete session.
+
+## Fair waiting
+
+The shared Durable Object keeps at most 64 waiting model requests. Each receives a
+random, private ticket for this response only. An older compatible request gets
+priority over a newer request competing for the same provider pool. A request
+whose route is unavailable or whose context cannot fit does not block a usable
+alternative. Different pools and already admitted model calls remain concurrent.
+
+One upstream attempt consumes a turn. A provider retry or the next response after
+a Bash command joins the back, so an active session cannot repeatedly jump ahead
+of newcomers. Internal queue polls do not reserve inference tokens or send model
+requests. Pricing, qualification, context, and quotas are checked again before
+the actual inference; waiting never overrides them.
+
+The server polls admission about every five seconds and streams a readable wait
+notice about every 15 seconds. Queue sleeps total at most 90 seconds within the
+existing 120-second request deadline, leaving time for inference. Full or timed-out
+queues return `free_capacity_exhausted` with a bounded retry hint. The CLI's
+existing five-minute retry budget still applies. A later HTTP retry joins anew;
+the service does not promise a permanent place across separate requests.
+
+Completion and cancellation remove the ticket. An abandoned ticket expires after
+30 seconds without activity, and no ticket survives 120 seconds. The queue stores
+only random tickets, timestamps, route IDs, and token requirements, never prompts,
+IP addresses, or persistent session/installation identifiers. Quality benchmarks
+yield to compatible production waiters and retain their existing retry limits.
 
 Completed Bash commands remain in history with their results. Recovery only retries
 the unfinished model response; it never replays completed commands. Discard partial

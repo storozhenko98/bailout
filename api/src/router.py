@@ -9,6 +9,7 @@ from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from decimal import Decimal, InvalidOperation
 from time import monotonic
+from anyio import CancelScope
 from capacity import LocalCapacity
 from context import MAX_BODY, MAX_MESSAGES, budget, quota_tokens
 from providers import Providers, ORIGINS, fingerprint
@@ -448,22 +449,81 @@ class Router:
         return candidates
 
     async def completion_events(self, data, candidates):
-        attempts, failed, blocked = 0, [], set()
+        # Fairness is per unfinished model response, never per installation or
+        # conversation. The shared ledger orders compatible requests; following
+        # tool calls and failed upstream attempts must join at the back again.
+        queued = self.capacity.fair_queue and not self.evaluation
+        routes = []
+        for model in candidates:
+            source = model.get("source", "openrouter")
+            fit = budget(model, [], data["messages"], [BASH_TOOL], output=2048 if source == "groq" else 4096)
+            if fit:
+                routes.append({"provider": source, "model": model["id"],
+                               "tokens": quota_tokens(data["messages"], [BASH_TOOL], fit["output_tokens"]),
+                               **({"quota": model["quota"]} if model.get("quota") else {})})
+        state = {"attempts": 0, "failed": [], "excluded": set(), "per_model": {}}
+        waiting = 0
+        try:
+            if queued:
+                await self.capacity.start(routes)
+            while True:
+                try:
+                    async with aclosing(self.completion_attempts(data, candidates, state)) as events:
+                        async for item in events:
+                            yield item
+                    return
+                except Failure as exc:
+                    if (not queued or exc.code != "free_capacity_exhausted" or state["attempts"] >= MAX_ATTEMPTS
+                            or not exc.retry_after_seconds or exc.retry_after_seconds > 90):
+                        raise
+                    # Poll only the private admission ledger while waiting. No
+                    # provider calls or repeated price fetches until a slot can
+                    # be used. Eligibility/pricing is then checked again below.
+                    notice_at = -15
+                    while True:
+                        if waiting >= 90 or self.remaining() <= 20:
+                            exc.message = "The free-model queue is still busy after waiting. Your conversation is preserved; try again shortly."
+                            exc.retry_after_seconds = 5
+                            raise exc
+                        ready = await self.capacity.waiting()
+                        if ready.get("code") == "queue_empty" or ready.get("retry_after_seconds", 0) > 90:
+                            raise exc
+                        if ready.get("ok"):
+                            break
+                        if waiting - notice_at >= 15:
+                            yield {"type": "model", "retry": True, "reason": "capacity_queue",
+                                   "notice": "Waiting for a free model slot. Older compatible requests go first. Ctrl-C to cancel."}
+                            notice_at = waiting
+                        delay = min(5 + random.uniform(0, .25), 90 - waiting, self.remaining() - 20)
+                        await self.sleep(delay)
+                        waiting += delay
+        finally:
+            if queued:
+                try:
+                    # ASGI disconnects use cancellation scopes that cancel each
+                    # subsequent await. Shield only the bounded ticket removal.
+                    with CancelScope(shield=True):
+                        await self.capacity.close()
+                except Failure:
+                    pass  # A lost isolate/disconnect also expires after 30s.
+
+    async def completion_attempts(self, data, candidates, state):
+        attempts, failed, blocked = state["attempts"], state["failed"], set()
         cooldown, waited = COOLDOWN_SECONDS, 0
         auto = data["model"] == "auto"
         last = Failure(503, "No free model capacity is available. Try again later.", code="free_capacity_exhausted", recoverable=False)
         shortest_wait = None
-        context_skipped = []
-        quota_skipped = []
+        context_skipped = state.setdefault("context_skipped", [])
+        quota_skipped = state.setdefault("quota_skipped", [])
         notices = []
         try:
             for index, candidate in enumerate(candidates):
                 source = candidate.get("source", "openrouter")
-                if source in blocked:
+                if source in blocked or candidate["id"] in state["excluded"]:
                     continue
                 if attempts >= MAX_ATTEMPTS:
                     break
-                for retry in range(1 if self.evaluation else 2):
+                for retry in range(state["per_model"].get(candidate["id"], 0), 1 if self.evaluation else 2):
                     self.remaining()
                     if attempts >= MAX_ATTEMPTS:
                         break
@@ -477,16 +537,22 @@ class Router:
                             model = next((m for m in await self.catalog() if m["id"] == candidate["id"]), None)
                             live = await self.endpoints(model) if model else []
                         if model is None or (source == "openrouter" and not live):
+                            state["excluded"].add(candidate["id"])
+                            await self.capacity.discard(model=candidate["id"])
                             break
                         if self.evaluation and model["fingerprint"] != candidate["fingerprint"]:
                             raise Failure(503, "Evaluation candidate metadata changed. Rediscover before testing.", code="pricing_unavailable", recoverable=False)
                         qualification = next((r for r in self.snapshot.get("models", []) if r["id"] == model["id"]), {})
                         if not self.evaluation and not qualified(qualification, model):
+                            state["excluded"].add(candidate["id"])
+                            await self.capacity.discard(model=candidate["id"])
                             break
                     except Exception as exc:
                         if isinstance(exc, Failure) and exc.code == "capacity_unavailable":
                             raise
                         blocked.add(source)
+                        state["excluded"].update(m["id"] for m in candidates if m.get("source", "openrouter") == source)
+                        await self.capacity.discard(provider=source)
                         last = exc if isinstance(exc, Failure) else Failure(503, "Provider eligibility could not be verified.", code="pricing_unavailable")
                         last.scope = "provider"
                         break
@@ -495,6 +561,8 @@ class Router:
                         messages = [{k: v for k, v in m.items() if k != "reasoning_details"} for m in messages]
                     fit = budget(model, live, messages, [BASH_TOOL], output=2048 if source == "groq" else 4096)
                     if fit is None:
+                        state["excluded"].add(model["id"])
+                        await self.capacity.discard(model=model["id"])
                         context_skipped.append(model["id"])
                         if not auto:
                             raise Failure(400, "The selected model has insufficient context room. Use Auto or /new.", code="context_exhausted", recoverable=False)
@@ -507,6 +575,8 @@ class Router:
                     permit = await self.capacity.reserve(source, model["id"], tokens, **({"quota": model["quota"]} if model.get("quota") else {}))
                     if not permit["ok"]:
                         if permit.get("code") == "route_context_capacity":
+                            state["excluded"].add(model["id"])
+                            await self.capacity.discard(model=model["id"])
                             # Waiting cannot make a request fit a completely
                             # empty token bucket. Preserve history and use a
                             # larger independent free allowance in Auto.
@@ -520,7 +590,7 @@ class Router:
                         # Try the independent pool first. Only the last remaining
                         # pool waits, and only a bounded time within this request.
                         alternatives = any(m.get("source", "openrouter") != source and m.get("source", "openrouter") not in blocked for m in candidates[index + 1:])
-                        if not self.evaluation and permit.get("scope") != "model" and not alternatives and 0 < delay <= MAX_CAPACITY_WAIT - waited and delay + 2 < self.remaining():
+                        if not self.capacity.fair_queue and not self.evaluation and permit.get("scope") != "model" and not alternatives and 0 < delay <= MAX_CAPACITY_WAIT - waited and delay + 2 < self.remaining():
                             yield {"type": "model", "model": model["id"], "retry": True, "notice": f"Free capacity is busy. Retrying in {delay}s…"}
                             await self.sleep(delay + random.uniform(.05, .25))
                             waited += delay
@@ -530,6 +600,8 @@ class Router:
                                 blocked.add(source)
                             break
                     attempts += 1
+                    state["attempts"] = attempts
+                    state["per_model"][model["id"]] = retry + 1
                     response, completed = None, None
                     # Reserve fallback time when there are other qualified routes.
                     # With one route, give it the normal response window instead
@@ -618,6 +690,8 @@ class Router:
                         return
                     if last.code == "context_exceeded" and auto:
                         context_skipped.append(model["id"])
+                        state["excluded"].add(model["id"])
+                        await self.capacity.discard(model=model["id"])
                         break  # Request-specific; never poison global model health.
                     if last.code not in {"upstream_policy", "invalid_model_request", "context_exceeded"}:
                         await self.observe(model["id"], last.code, started)
@@ -650,6 +724,11 @@ class Router:
                                                  last.retry_after_seconds or (60 if provider_wide else COOLDOWN_SECONDS))
                     if provider_wide:
                         blocked.add(source)
+                        state["excluded"].update(m["id"] for m in candidates if m.get("source", "openrouter") == source)
+                        await self.capacity.discard(provider=source)
+                    else:
+                        state["excluded"].add(model["id"])
+                        await self.capacity.discard(model=model["id"])
                     if not auto:
                         last.message += " Your selected model is unchanged. Use Auto for automatic recovery."
                         raise last

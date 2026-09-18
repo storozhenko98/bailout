@@ -36,6 +36,13 @@ Each provider allows at most eight concurrent calls and each model at most two
 (one for ZAI free routes).
 A refusal never enables paid inference.
 
+At most 64 model requests can wait in the shared fair queue. Older compatible
+requests get a turn before newer requests using the same pool; a session's next
+model request joins the back. Server queue sleeps total at most 90 seconds within
+the 120-second request deadline. Cancellation removes the ticket; abandoned tickets
+expire after 30 seconds without activity. Queue-full and queue-timeout refusals use
+`free_capacity_exhausted` and a retry hint. See [fair waiting](model-recovery.md#fair-waiting).
+
 ## Hosting allowance
 
 The public deployment targets a $50 monthly hosting budget: $5 for Workers Paid,
@@ -120,8 +127,10 @@ validated `done` event authorizes executing tools; partial responses do not.
 After stream headers are sent, backend errors use an NDJSON `error` event under
 HTTP 200 with the same machine-readable codes. Do not treat HTTP 200 alone as a
 completed model response. Auto's internal provider retries share one admission
-and a maximum of four attempts / 120 seconds. The CLI does not resubmit a failed
-API request and multiply that budget. See [model recovery](model-recovery.md).
+and a maximum of four attempts / 120 seconds, including queue waiting. The CLI can
+resubmit an explicitly temporary refusal, with at most eight HTTP attempts within
+a total five-minute budget for that unfinished model response. It never replays
+completed Bash commands. See [model recovery](model-recovery.md).
 
 ## Operator controls
 

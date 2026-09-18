@@ -66,7 +66,7 @@ async def models(request: Request):
 
 
 @app.post("/v1/chat", tags=["chat"], summary="Ask a verified free model",
-    description="Auto reserves shared capacity for every attempt, retries temporary 429s once with backoff, and can try four attempts within 120 seconds. Legacy pinned requests never switch. Streaming model events with retry=true mark discarded attempts; execute Bash only from the final validated done message. Provider/account exhaustion can use a separately enabled free provider. Policy and hosting limits stop recovery. Unknown prices disable that route.",
+    description="Auto reserves shared capacity for every attempt, retries temporary 429s once with backoff, and can try four attempts within 120 seconds. A bounded fair queue gives older compatible requests priority, with up to 90 seconds of waiting inside that deadline. Retries and follow-up model requests join the back. Legacy pinned requests never switch. Streaming model events with retry=true announce recovery or waiting; execute Bash only from the final validated done message. Provider/account exhaustion can use a separately enabled free provider. Policy and hosting limits stop recovery. Unknown prices disable that route.",
     openapi_extra={"requestBody": {"required": True, "content": {"application/json": {"schema": {
         "type": "object", "additionalProperties": False, "required": ["messages"],
         "properties": {"model": {"type": "string", "default": "auto", "description": "auto or an explicit vendor/model:free ID"},
