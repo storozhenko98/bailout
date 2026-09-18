@@ -62,6 +62,8 @@ class Failure(Exception):
         if self.retry_after_seconds is not None:
             result["retry_after_seconds"] = self.retry_after_seconds
             result["resets_at"] = (datetime.now(timezone.utc) + timedelta(seconds=self.retry_after_seconds)).isoformat()
+            # Older clients display only this string, not structured retry fields.
+            result["error"] += f" Retry after {self.retry_after_seconds} seconds."
         return result
 
 
@@ -576,7 +578,7 @@ class Router:
             if context_skipped and (attempts == 0 or last.code == "context_exceeded") and shortest_wait is None:
                 raise Failure(400, "No qualified free model currently has enough context room for this conversation. Your history was preserved. Use /new for a fresh task.", code="context_exhausted", recoverable=False)
             if shortest_wait is not None:
-                last = Failure(429, "Bailout's free model capacity is busy. Please retry after the indicated delay. No paid fallback was used.", code="free_capacity_exhausted", recoverable=False)
+                last = Failure(429, "Bailout's free model capacity is busy. No paid fallback was used.", code="free_capacity_exhausted", recoverable=False)
                 last.retry_after_seconds = shortest_wait
                 raise last
             if last.scope == "provider" or not attempts:

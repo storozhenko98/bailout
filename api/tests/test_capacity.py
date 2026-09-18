@@ -204,6 +204,7 @@ async def test_all_capacity_exhausted_returns_honest_retry_time_no_inference():
     events = await stream(Router(stub, 'test', capacity=meter, sleep=no_wait), data(stream=True))
     assert events[-1]['code'] == 'free_capacity_exhausted'
     assert events[-1]['retry_after_seconds'] == 60 and not stub.inferences()
+    assert 'Retry after 60 seconds.' in events[-1]['error']
 
 
 def test_retry_after_supports_http_date_and_rejects_malformed():
