@@ -94,13 +94,16 @@ def handler(base, token, candidate, meter, state):
                         state["native_tools"] |= bool(item.get("message", {}).get("tool_calls"))
                     elif item.get("type") == "error":
                         state["inconclusive"] |= item.get("code") in TEMPORARY
+                        print(json.dumps({"model": candidate["id"], "error_code": item.get("code"),
+                                          "retry_after_seconds": item.get("retry_after_seconds")}), flush=True)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/x-ndjson")
                 self.send_header("Content-Length", str(len(result)))
                 self.end_headers()
                 self.wfile.write(result)
-            except (OSError, ValueError, TypeError, AttributeError):
+            except (OSError, ValueError, TypeError, AttributeError) as exc:
                 state["inconclusive"] = True
+                print(json.dumps({"model": candidate["id"], "transport_error": type(exc).__name__}), flush=True)
                 self.send_error(503)
     return Handler
 
