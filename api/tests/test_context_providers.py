@@ -141,6 +141,8 @@ async def test_mistral_free_attestation_tools_context_and_call_id_mapping():
     assert await p.discover() == [] and not transport.calls
     p.accounts = free_accounts()
     m = (await p.discover())[0]
+    transport.rows[0]['created'] = 999
+    assert (await p.discover())[0]['fingerprint'] == m['fingerprint']
     messages = [dict(role="assistant", tool_calls=[tool()], reasoning_details=[]), dict(role="tool", tool_call_id="call_a", content="done")]
     before = deepcopy(messages)
     body = p.body(m, messages, False, 4096)

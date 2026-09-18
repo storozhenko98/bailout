@@ -122,7 +122,10 @@ class Providers:
             model = {"id": f"{provider}/{id}:free", "upstream_id": id, "source": provider,
                      "name": row.get("name", id), "context_length": window,
                      "max_output": row.get("max_completion_tokens") or row.get("max_tokens") or 4096,
-                     "revision": row.get("root") or row.get("created"), "parameters": params}
+                     # Mistral's OpenAI-compatible `created` is generated at
+                     # catalog request time, not a model revision. Using it
+                     # would invalidate qualification on every refresh.
+                     "revision": row.get("root") or (row.get("version") if provider == "mistral" else row.get("created")), "parameters": params}
             # Some free accounts expose separate quotas for each model. Only
             # an explicitly verified account configuration can split that pool.
             quota = self.accounts.get(provider, {}).get("limits_by_model", {}).get(id)
