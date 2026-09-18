@@ -122,6 +122,17 @@ def test_every_qualified_model_remains_available_and_health_can_outweigh_quality
     assert rank([a, b, c], snapshot)[0]['id'] == a['id'], 'old failures must not permanently ban a route'
 
 
+def test_more_evidence_breaks_close_scores_without_excluding_a_new_route():
+    established, newcomer = model('test/established:free'), model('test/new:free')
+    for m in (established, newcomer):
+        m['fingerprint'] = fingerprint(m)
+    snapshot = {'models': [qualification(established, passed=18), qualification(newcomer, trials=10, passed=9, runs=1)],
+                'health': {established['id']: {'success_ewma': .95, 'updated': datetime.now(timezone.utc).timestamp() * 1000}}}
+    assert [m['id'] for m in rank([newcomer, established], snapshot)] == [established['id'], newcomer['id']]
+    snapshot['health'][established['id']]['success_ewma'] = .5
+    assert rank([established, newcomer], snapshot)[0]['id'] == newcomer['id'], 'availability must still outweigh the evidence bonus'
+
+
 class Direct:
     def __init__(self, provider, rows):
         self.provider, self.rows = provider, rows

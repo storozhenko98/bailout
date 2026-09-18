@@ -67,8 +67,10 @@ live free eligibility, context, cooldowns, quotas, and the hosting allowance mus
 all pass before serving a user.
 
 Every qualified model remains eligible to serve users. Rankings score task success
-(0–100 points), recent availability (0–25 points), and a small successful-session
-preference (2 points). Availability can outweigh the difference between an 80% and
+(0–100 points), recent availability (0–25 points), additional test evidence (up to
+2 points after a second complete run), and a small successful-session preference
+(2 points). The evidence bonus breaks close scores without excluding newly
+qualified models. Availability can outweigh the difference between an 80% and
 100% model; qualification establishes useful setup ability, not frontier performance.
 The Durable Object keeps recent success/failure averages, latency, and cooldowns
 per route, without prompts or conversation logs.

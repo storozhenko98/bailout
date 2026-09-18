@@ -36,7 +36,10 @@ def rank(models, snapshot, preferred=None, avoid=()):
         reliability = state.get("success_ewma", 1)
         age = max(0, datetime.now(timezone.utc).timestamp() * 1000 - state.get("updated", 0))
         reliability = 1 - (1 - reliability) * max(0, 1 - age / 3600000)
-        result.append({**model, "quality": quality, "score": quality * 100 + reliability * 25 + (2 if model["id"] == preferred else 0),
+        # Equal percentages from one and two complete runs are not equally
+        # established. This small, capped bonus never gates a new eligible model.
+        evidence = min(2, max(0, row["trials"] - MIN_TRIALS) / 5)
+        result.append({**model, "quality": quality, "score": quality * 100 + reliability * 25 + evidence + (2 if model["id"] == preferred else 0),
                        "reliability": reliability,
                        "trials": row["trials"]})
     result.sort(key=lambda m: (-m["score"], m["id"] != preferred, m["id"]))
