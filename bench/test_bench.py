@@ -18,6 +18,28 @@ NOW = datetime.now(timezone.utc).isoformat()
 
 
 class ScoringTests(unittest.TestCase):
+    def test_throttled_first_candidate_cannot_spend_the_second_candidates_allowance(self):
+        candidates = [{**MODEL, 'id': f'test/{name}:free'} for name in ['a', 'b']]
+        calls = []
+        def task(base, token, model, task, seed, meter):
+            calls.append((model['id'], meter['requests']))
+            blocked = model['id'] == candidates[0]['id']
+            meter['requests'] += meter['max'] if blocked else 1
+            return dict(passed=not blocked, critical=False, native_tools=True, inconclusive=blocked)
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'rankings.json'
+            with patch('sys.argv', ['run.py', '--skip-build', '--output', str(output)]), \
+                 patch.dict(os.environ, BAILOUT_BENCHMARK_TOKEN='x' * 40), \
+                 patch.object(run, 'api', return_value=json.dumps({'candidates': candidates, 'snapshot': {'models': []}}).encode()), \
+                 patch.object(run, 'select_candidates', return_value=candidates), \
+                 patch.object(run, 'run_task', side_effect=task), \
+                 patch.object(run.subprocess, 'check_output', return_value='a' * 40), patch('builtins.print'):
+                run.main()
+            evidence = json.loads(output.read_text())
+            self.assertEqual(calls[1], (candidates[1]['id'], 0))
+            self.assertEqual([m['id'] for m in evidence['models']], [candidates[1]['id']])
+            self.assertEqual(evidence['models'][0]['trials'], 10)
+
     def test_slow_second_model_preserves_completed_first_model_before_job_deadline(self):
         candidates = [{**MODEL, 'id': f'test/{name}:free'} for name in ['a', 'b']]
         elapsed = [0]

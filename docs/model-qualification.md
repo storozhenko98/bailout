@@ -80,7 +80,9 @@ until qualified.
 `.github/workflows/qualify-models.yml` runs daily at 09:17 UTC and supports manual
 dispatch. Manual runs accept up to two exact candidate IDs for bootstrap or
 regression checks; blank input uses the same rotation as the scheduled job.
-It evaluates up to two models and 80 inference requests per run. The
+It evaluates up to two models with at most 80 inference API submissions per model
+(160 per workflow), including retries and capacity refusals. Each candidate has
+its own allowance so a throttled provider cannot starve the next model. The
 controller stops starting new tasks after 45 minutes, leaving time to finish the
 current bounded task and upload completed evidence before the 60-minute job limit.
 Incomplete candidates never erase another candidate's completed results. The

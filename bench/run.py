@@ -236,7 +236,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--api", default="https://api.bailout.dev")
     parser.add_argument("--output", default="artifacts/rankings.json")
-    parser.add_argument("--max-requests", type=int, default=80)
+    parser.add_argument("--max-requests", type=int, default=80, help="Maximum inference API submissions per candidate, including retries")
     parser.add_argument("--max-models", type=int, default=2)
     parser.add_argument("--models", nargs="*")
     parser.add_argument("--skip-build", action="store_true")
@@ -253,13 +253,15 @@ def main():
     candidates = catalog["candidates"]
     if args.models:
         candidates = [m for m in candidates if m["id"] in args.models]
-    meter = {"requests": 0, "max": args.max_requests, "lock": threading.Lock()}
     timestamp = datetime.now(timezone.utc).isoformat()
     candidates = select_candidates(candidates, previous, args.max_models, timestamp)
     run_id = os.environ.get("GITHUB_RUN_ID", str(time.time_ns())) + "-" + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
     deadline = time.monotonic() + 45 * 60
     output = []
     for model in candidates:
+        # A throttled first provider must not consume the next candidate's
+        # entire evaluation allowance. The gateway's daily cap is still shared.
+        meter = {"requests": 0, "max": args.max_requests, "lock": threading.Lock()}
         results = []
         for task in TASKS:
             # A task can take at most seven minutes. Stop starting tasks at
@@ -269,7 +271,8 @@ def main():
             seed = int.from_bytes(hashlib.sha256((run_id + model["id"] + task).encode()).digest()[:4])
             result = run_task(args.api, token, model, task, seed, meter)
             results.append(result)
-            print(json.dumps({"model": model["id"], "task": task, **result}), flush=True)
+            print(json.dumps({"model": model["id"], "task": task, **result,
+                              "requests_used": meter["requests"], "request_limit": meter["max"]}), flush=True)
             if result["inconclusive"]:
                 break
         row = accumulate(model, results, previous.get(model["id"]), timestamp)
