@@ -50,10 +50,11 @@ jobs:
         if: inputs.diagnose_task == ''
         with:
           path: artifacts/qualification-progress.json
-          key: qualification-${{ inputs.progress_group || 'nightly' }}-${{ hashFiles('src/**', 'bench/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: qualification-v2:${{ inputs.progress_group || 'nightly' }}:${{ hashFiles('src/**', 'bench/**') }}:${{ github.run_id }}:${{ github.run_attempt }}
           restore-keys: |
+            qualification-v2:${{ inputs.progress_group || 'nightly' }}:${{ hashFiles('src/**', 'bench/**') }}:
+            qualification-v2:${{ inputs.progress_group || 'nightly' }}:
             qualification-${{ inputs.progress_group || 'nightly' }}-${{ hashFiles('src/**', 'bench/**') }}-
-            qualification-${{ inputs.progress_group || 'nightly' }}-
       - name: Evaluate synthetic setup and repair tasks
         id: evaluation
         continue-on-error: true
@@ -94,7 +95,7 @@ jobs:
         if: always() && inputs.diagnose_task == '' && hashFiles('artifacts/qualification-progress.json') != ''
         with:
           path: artifacts/qualification-progress.json
-          key: qualification-${{ inputs.progress_group || 'nightly' }}-${{ hashFiles('src/**', 'bench/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: qualification-v2:${{ inputs.progress_group || 'nightly' }}:${{ hashFiles('src/**', 'bench/**') }}:${{ github.run_id }}:${{ github.run_attempt }}
       - name: Report incomplete evaluation
         if: steps.evaluation.outcome == 'failure'
         run: exit 1
