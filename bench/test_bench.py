@@ -18,6 +18,20 @@ NOW = datetime.now(timezone.utc).isoformat()
 
 
 class ScoringTests(unittest.TestCase):
+    def test_diagnostic_task_never_changes_or_publishes_qualification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output, checkpoint = Path(tmp) / 'rankings.json', Path(tmp) / 'progress.json'
+            arguments = ['run.py', '--skip-build', '--models', MODEL['id'], '--diagnose-task', 'config',
+                         '--output', str(output), '--checkpoint', str(checkpoint)]
+            with patch('sys.argv', arguments), patch.dict(os.environ, BAILOUT_BENCHMARK_TOKEN='x' * 40), \
+                 patch.object(run, 'api', return_value=json.dumps({'candidates': [MODEL], 'snapshot': {'models': []}}).encode()), \
+                 patch.object(run, 'run_task', return_value={'passed': True, 'transcript': 'Synthetic only'}) as task, patch('builtins.print'):
+                run.main()
+            self.assertEqual(task.call_count, 1)
+            self.assertEqual(task.call_args.args[3], 'config')
+            self.assertFalse(output.exists())
+            self.assertFalse(checkpoint.exists())
+
     def test_parallel_provider_jobs_have_distinct_publication_ids(self):
         with patch.dict(os.environ, GITHUB_RUN_ID='1234', GITHUB_RUN_ATTEMPT='1'):
             other = {**MODEL, 'id': 'other/model:free'}

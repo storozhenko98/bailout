@@ -609,7 +609,8 @@ class Router:
                     if not last.recoverable:
                         raise last
                     if self.evaluation and last.retry_after_seconds is None and last.code in {
-                        "upstream_rate_limited", "provider_rate_limited", "provider_unavailable", "provider_timeout"
+                        "upstream_rate_limited", "provider_rate_limited", "provider_unavailable", "provider_timeout",
+                        "invalid_tool_response", "request_failed"
                     }:
                         # The benchmark controller retries this exact model
                         # within its own request/time budget. A headerless

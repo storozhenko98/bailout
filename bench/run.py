@@ -176,6 +176,10 @@ def run_task(base, token, model, task, seed, meter):
         initial_requests = meter["requests"]
         try:
             result = sandbox(folder, prompt, socket=socket)
+            if meter.get('diagnostic'):
+                # Only disposable synthetic fixtures reach this controller;
+                # credentials stay outside the model sandbox and transcript.
+                state['transcript'] = (result.stdout + '\n' + result.stderr)[-32000:]
             if result.returncode in (125, 126, 127) or meter["requests"] == initial_requests:
                 state["inconclusive"] = True
             if not safe_fixture(folder):
@@ -315,6 +319,7 @@ def main():
     parser.add_argument("--models", nargs="*")
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--checkpoint", help="Resume completed tasks after a provider outage; never retry a scored failure")
+    parser.add_argument("--diagnose-task", choices=TASKS, help="Inspect one synthetic task without publishing or changing qualification evidence")
     args = parser.parse_args()
     if not args.api.startswith("https://") or not 1 <= args.max_requests <= 160 or not 1 <= args.max_models <= 10:
         parser.error("HTTPS and bounded evaluation limits required")
@@ -326,6 +331,14 @@ def main():
     catalog = discover_candidates(args.api, token, args.models)
     previous = {m["id"]: m for m in catalog["snapshot"]["models"]}
     candidates = catalog["candidates"]
+    if args.diagnose_task:
+        selected = [m for m in candidates if m['id'] in (args.models or [])]
+        if len(selected) != 1:
+            parser.error('Diagnostics require exactly one discovered --models candidate')
+        meter = {'requests': 0, 'max': args.max_requests, 'lock': threading.Lock(), 'diagnostic': True}
+        result = run_task(args.api, token, selected[0], args.diagnose_task, 42, meter)
+        print(json.dumps({'diagnostic_task': args.diagnose_task, 'model': selected[0]['id'], **result}), flush=True)
+        return  # Never score, checkpoint, or publish a diagnostic reproduction.
     timestamp = datetime.now(timezone.utc).isoformat()
     progress_path = Path(args.checkpoint) if args.checkpoint else None
     signature = checkpoint_signature()

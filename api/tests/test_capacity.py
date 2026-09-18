@@ -153,6 +153,17 @@ async def test_pinned_429_can_retry_but_never_changes_model():
     assert [b['model'] for b in stub.inferences()] == ['test/a:free'] * 2
 
 
+async def test_evaluation_protocol_failure_is_scored_without_blocking_the_next_fixture_for_five_minutes():
+    broken = Response(None, raw=sse(dict(choices=[dict(delta={}, finish_reason='stop')])))
+    meter = Meter()
+    route = Router(Sequence([broken]), 'test', capacity=meter)
+    route.evaluation = True
+    events = await stream(route, data('test/a:free', stream=True))
+    assert events[-1]['code'] == 'request_failed'
+    assert events[-1]['retry_after_seconds'] == 2
+    assert meter.cooldowns == [('openrouter', 'test/a:free', 2)]
+
+
 async def test_provider_retry_after_is_not_shortened_and_long_delays_switch():
     busy = error(429, provider_name='provider'); busy.retry_after = '600'
     stub, waits, meter = Sequence([busy, Response(completion())]), [], Meter()
