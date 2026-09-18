@@ -78,6 +78,9 @@ until qualified.
 dispatch. Manual runs accept up to two exact candidate IDs for bootstrap or
 regression checks; blank input uses the same rotation as the scheduled job.
 It evaluates up to two models and 80 inference requests per run. The
+controller stops starting new tasks after 45 minutes, leaving time to finish the
+current bounded task and upload completed evidence before the 60-minute job limit.
+Incomplete candidates never erase another candidate's completed results. The
 gateway independently caps evaluation at 1,000 requests per UTC day, shared across
 workflow reruns; production provider quotas and the hosting allowance still apply.
 The authenticated evaluator allows up to 1,000 admissions per hour for release

@@ -257,11 +257,14 @@ def main():
     timestamp = datetime.now(timezone.utc).isoformat()
     candidates = select_candidates(candidates, previous, args.max_models, timestamp)
     run_id = os.environ.get("GITHUB_RUN_ID", str(time.time_ns())) + "-" + os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+    deadline = time.monotonic() + 45 * 60
     output = []
     for model in candidates:
         results = []
         for task in TASKS:
-            if meter["requests"] >= meter["max"]:
+            # A task can take at most seven minutes. Stop starting tasks at
+            # 45 minutes so the 60-minute job still uploads completed evidence.
+            if meter["requests"] >= meter["max"] or time.monotonic() >= deadline:
                 break
             seed = int.from_bytes(hashlib.sha256((run_id + model["id"] + task).encode()).digest()[:4])
             result = run_task(args.api, token, model, task, seed, meter)

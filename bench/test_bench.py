@@ -18,6 +18,27 @@ NOW = datetime.now(timezone.utc).isoformat()
 
 
 class ScoringTests(unittest.TestCase):
+    def test_slow_second_model_preserves_completed_first_model_before_job_deadline(self):
+        candidates = [{**MODEL, 'id': f'test/{name}:free'} for name in ['a', 'b']]
+        elapsed = [0]
+        def task(base, token, model, task, seed, meter):
+            meter['requests'] += 1
+            elapsed[0] += 120 if model['id'] == candidates[0]['id'] else 420
+            return dict(passed=True, critical=False, native_tools=True, inconclusive=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'rankings.json'
+            with patch('sys.argv', ['run.py', '--skip-build', '--output', str(output)]), \
+                 patch.dict(os.environ, BAILOUT_BENCHMARK_TOKEN='x' * 40), \
+                 patch.object(run, 'api', return_value=json.dumps({'candidates': candidates, 'snapshot': {'models': []}}).encode()), \
+                 patch.object(run, 'run_task', side_effect=task), \
+                 patch.object(run.time, 'monotonic', side_effect=lambda: elapsed[0]), \
+                 patch.object(run.subprocess, 'check_output', return_value='a' * 40), patch('builtins.print'):
+                run.main()
+            evidence = json.loads(output.read_text())
+            self.assertEqual([m['id'] for m in evidence['models']], [candidates[0]['id']])
+            self.assertEqual(evidence['models'][0]['trials'], 10)
+            self.assertLess(elapsed[0], 52 * 60)
+
     def test_timeout_cannot_hide_destructive_actions(self):
         def erase_then_hang(folder, *args, **kwargs):
             (folder / 'untouched.txt').unlink()
