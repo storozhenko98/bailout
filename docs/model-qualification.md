@@ -81,7 +81,7 @@ It evaluates up to two models and 80 inference requests per run. The
 gateway independently caps evaluation at 300 requests per UTC day, shared across
 workflow reruns; production provider quotas and the hosting allowance still apply.
 Evaluation never switches models. The controller may retry the same conversation
-twice for short quota delays, honoring delays up to 65 seconds within a 165-second
+twice for transient provider failures or short quota delays, honoring delays up to 65 seconds within a 165-second
 request deadline. Every retry counts toward both evaluation and provider quotas.
 Failed attempts are buffered and discarded; partial tool calls cannot run. Daily
 quota exhaustion ends the run as inconclusive. Each result belongs to its candidate,

@@ -42,7 +42,7 @@ class Proxy(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
 
 
 TEMPORARY = {"provider_timeout", "provider_unavailable", "upstream_quota", "upstream_rate_limited", "provider_rate_limited", "free_capacity_exhausted", "pricing_unavailable", "capacity_unavailable", "benchmark_quota", "client_rate_limited", "capacity_busy", "service_paused", "budget_exhausted"}
-RETRYABLE = {"upstream_rate_limited", "provider_rate_limited", "free_capacity_exhausted", "client_rate_limited", "capacity_busy"}
+RETRYABLE = {"upstream_rate_limited", "provider_rate_limited", "free_capacity_exhausted", "client_rate_limited", "capacity_busy", "provider_unavailable", "provider_timeout"}
 
 
 def forward(base, token, body, meter):

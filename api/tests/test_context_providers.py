@@ -241,6 +241,20 @@ async def test_vercel_prices_rechecked_before_retry():
     assert len([u for u, _ in transport.calls if u.endswith('/chat/completions')]) == 1
 
 
+@pytest.mark.parametrize('status', [429, 503])
+async def test_evaluation_exposes_short_retry_without_switching_models(status):
+    transport = Sequence([Response({'error': {'code': status}}, status)])
+    meter = Meter()
+    route = Router(transport, 'test', capacity=meter)
+    route.evaluation = True
+    request = data(); request['model'] = 'test/a:free'
+    with pytest.raises(Failure) as caught:
+        await route.chat(request)
+    assert caught.value.retry_after_seconds == 2
+    assert len(transport.inferences()) == 1
+    assert len(meter.cooldowns) == 1 and meter.cooldowns[0][-1] == 2
+
+
 async def test_zai_live_docs_and_prices_gate_every_attempt():
     from providers import ZAI_PRICING, ZAI_DOCS
     class Zai:

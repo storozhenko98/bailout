@@ -541,6 +541,13 @@ class Router:
                         await self.capacity.cooldown(source, None, 86400)
                     if not last.recoverable:
                         raise last
+                    if self.evaluation and last.retry_after_seconds is None and last.code in {
+                        "upstream_rate_limited", "provider_rate_limited", "provider_unavailable", "provider_timeout"
+                    }:
+                        # The benchmark controller retries this exact model
+                        # within its own request/time budget. A headerless
+                        # transient refusal must not create a five-minute ban.
+                        last.retry_after_seconds = 2
                     # Retry temporary 429s once, with jitter and Retry-After. A
                     # daily/account allowance or auth failure needs another pool.
                     delay = last.retry_after_seconds or 2
