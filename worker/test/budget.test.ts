@@ -66,6 +66,16 @@ test('IPv6 addresses in a /64 and mapped IPv4 cannot evade identity grouping', (
   for (const bad of ['', 'local', '300.1.1.1', 'abc:zz']) assert.throws(() => clientNetwork(bad));
 });
 
+test('authenticated evaluations have bounded bootstrap capacity and still consume the hosting allowance', () => {
+  const { gate, storage } = ledger();
+  for (let i = 0; i < 1000; i++) assert.equal(gate.admit(client, 'benchmark', now + Math.floor(i / 30) * 60000).status, 200);
+  assert.equal(new BudgetLedger(storage).admit(client, 'benchmark', now + 35 * 60000).body.code, 'client_rate_limited');
+  assert.equal(gate.admit(client, 'benchmark', now + 3600000).body.code, 'client_rate_limited');
+  const capped = ledger(310).gate;
+  assert.equal(capped.admit(client, 'benchmark', now).status, 200);
+  assert.equal(capped.admit(client, 'benchmark', now + 60000).body.code, 'budget_exhausted');
+});
+
 function runtime(allowance, api) {
   return new Miniflare(convertV4MiniflareOptions({ workers: [{ name: 'gateway', modules: [{type:'ESModule', path:'gateway.js', contents:buildSync({entryPoints:[fileURLToPath(new URL('../src/gateway.ts', import.meta.url))],bundle:true,write:false,format:'esm',platform:'browser'}).outputFiles[0].text}], compatibilityDate: '2026-09-17',
     bindings: { BUDGET_ALLOWANCE_MICRO_USD: String(allowance), SERVICE_PAUSED: 'false' },

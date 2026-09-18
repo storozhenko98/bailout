@@ -184,7 +184,7 @@ async function internal(request: Request, env: Env) {
   if (env.SERVICE_PAUSED === 'true') return response(refusal('service_paused', 'Service is paused.', 3600, 503));
   // Benchmarks share the hosting allowance and provider meters. This identity
   // cannot be supplied by a public user and carries no user information.
-  const check = await gate.fetch('https://budget/admit', { method: 'POST', body: JSON.stringify({ client: 'b'.repeat(64), kind: 'chat' }) });
+  const check = await gate.fetch('https://budget/admit', { method: 'POST', body: JSON.stringify({ client: 'b'.repeat(64), kind: 'benchmark' }) });
   if (!check.ok) return check;
   if (path.endsWith('/chat')) {
     const permit = await gate.fetch('https://budget/capacity/benchmark', { method: 'POST', body: '{}' });

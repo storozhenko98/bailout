@@ -38,7 +38,7 @@ export class BudgetLedger {
     this.sql.exec('CREATE TABLE IF NOT EXISTS global_state (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
   }
   admit(client: string, kind: string, now = Date.now()): HttpResult {
-    if (!/^[a-f0-9]{64}$/.test(client) || !['chat', 'read', 'status'].includes(kind)) throw new Error('Invalid internal admission request');
+    if (!/^[a-f0-9]{64}$/.test(client) || !['chat', 'read', 'status', 'benchmark'].includes(kind)) throw new Error('Invalid internal admission request');
     return this.storage.transactionSync(() => {
       const hour = Math.floor(now / 3_600_000), day = Math.floor(hour / 24), minute = Math.floor(now / 60_000);
       this.sql.exec('DELETE FROM budget WHERE hour < ?', hour - POLICY.windowHours);
@@ -55,7 +55,8 @@ export class BudgetLedger {
         this.sql.exec('DELETE FROM clients WHERE expires <= ?', now);
         g.cleanupHour = hour;
       }
-      if (g.requests >= POLICY.globalMinute || (kind === 'chat' && g.chats >= this.chatLimit)) {
+      const chat = kind === 'chat' || kind === 'benchmark';
+      if (g.requests >= POLICY.globalMinute || (chat && g.chats >= this.chatLimit)) {
         return refusal('capacity_busy', 'Shared free capacity is busy. Try again after the indicated delay.', (minute + 1) * 60 - now / 1000, 429, now);
       }
       const row = [...this.sql.exec<{ value: string }>('SELECT value FROM clients WHERE id = ?', client)][0];
@@ -63,10 +64,13 @@ export class BudgetLedger {
       for (const [window, stamp] of [['minute', minute], ['hour', hour], ['day', day]] as const) {
         if (c[window] !== stamp) { c[window] = stamp; c[window + 'Count'] = 0; }
       }
-      for (const [window, limit, duration] of [['minute', POLICY.clientMinute, 60], ['hour', POLICY.clientHour, 3600], ['day', POLICY.clientDay, 86400]] as const) {
+      // Only the authenticated operator route can use this kind. Its separate
+      // daily evaluation meter bounds bootstrap reruns; public IP limits stay
+      // unchanged. Every attempt still reserves hosting and provider capacity.
+      for (const [window, limit, duration] of [['minute', POLICY.clientMinute, 60], ['hour', kind === 'benchmark' ? 1000 : POLICY.clientHour, 3600], ['day', POLICY.clientDay, 86400]] as const) {
         if (c[window + 'Count'] >= limit) return refusal('client_rate_limited', `This IP address has reached Bailout's ${window === 'day' ? 'daily' : window === 'hour' ? 'hourly' : 'per-minute'} fair-use limit. Wait before retrying.`, (c[window] + 1) * duration - now / 1000, 429, now);
       }
-      g.requests++; if (kind === 'chat') g.chats++;
+      g.requests++; if (chat) g.chats++;
       c.minuteCount++; c.hourCount++; c.dayCount++;
       this.sql.exec('INSERT INTO global_state VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET value = excluded.value', JSON.stringify(g));
       this.sql.exec('INSERT INTO clients VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET value = excluded.value, expires = excluded.expires', client, JSON.stringify(c), (day + 2) * 86400000);

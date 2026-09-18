@@ -80,6 +80,9 @@ regression checks; blank input uses the same rotation as the scheduled job.
 It evaluates up to two models and 80 inference requests per run. The
 gateway independently caps evaluation at 1,000 requests per UTC day, shared across
 workflow reruns; production provider quotas and the hosting allowance still apply.
+The authenticated evaluator allows up to 1,000 admissions per hour for release
+verification, with the same 30-per-minute pacing and 1,000-per-day ceiling. Public
+client limits are unchanged. Catalog reads also consume evaluator admissions.
 Evaluation never switches models. The controller may retry the same conversation
 twice for transient provider failures or short quota delays, honoring delays up to 65 seconds within a 165-second
 request deadline. Every retry counts toward both evaluation and provider quotas.
