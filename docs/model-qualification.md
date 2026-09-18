@@ -163,3 +163,19 @@ never mounted into the model's sandbox.
 No LiteLLM or Artificial Analysis runtime dependency is required. Our own synthetic
 benchmark supplies qualification evidence; an external dataset would require its
 own license review and explicit model-version mapping.
+
+## Live setup regressions
+
+Synthetic fixture scores are a baseline, not proof that every real installation
+works. On September 18, 2026, three public-Auto sessions in fresh Ubuntu ARM64
+containers exposed a regression in `mistral/ministral-8b-2512:free`: it confused
+OpenCode with VS Code, guessed installation URLs and flags, and repeated failing
+steps. A stronger installation prompt in v0.7.1 did not resolve the whole task.
+Independent executable checks rejected all three recordings.
+
+That model and its rolling alias are held out of production in `api/src/ranking.py`.
+They remain discoverable for evaluation. A nightly synthetic pass cannot clear this
+hold; removing it requires a reviewed successful fresh-machine installation from
+official sources, correct executable checks in a new shell, and safe uninstall.
+The ordinary 80% qualification floor and availability-based fallback still apply
+to other models. No benchmark scores were rewritten to manufacture this decision.

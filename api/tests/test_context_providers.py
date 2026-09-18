@@ -122,6 +122,15 @@ def test_every_qualified_model_remains_available_and_health_can_outweigh_quality
     assert rank([a, b, c], snapshot)[0]['id'] == a['id'], 'old failures must not permanently ban a route'
 
 
+def test_observed_setup_regression_cannot_reenter_through_alias_or_new_nightly_score():
+    for id in ('mistral/ministral-8b-2512:free', 'mistral/ministral-8b-latest:free', 'mistral/another-alias:free'):
+        m = {**model(id), 'source': 'mistral', 'name': 'ministral-8b-2512'}
+        m['fingerprint'] = fingerprint(m)
+        row = qualification(m, passed=20)
+        assert not qualified(row, m)
+        assert rank([m], {'models': [row]}, preferred=id) == []
+
+
 def test_more_evidence_breaks_close_scores_without_excluding_a_new_route():
     established, newcomer = model('test/established:free'), model('test/new:free')
     for m in (established, newcomer):

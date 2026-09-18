@@ -6,8 +6,16 @@ MIN_TRIALS = 10
 MIN_RUNS = 1
 MIN_PASS_RATE = .8
 
+# Synthetic fixture passes cannot override a reproduced production regression.
+# See docs/model-qualification.md: three fresh-machine runs on 2026-09-18.
+# Keep discovery/evaluation available, but require a reviewed live setup pass
+# before lifting this hold. Cover the provider's dated and rolling aliases.
+SETUP_HOLD = {"mistral/ministral-8b-2512:free", "mistral/ministral-8b-latest:free"}
+
 
 def qualified(row, model):
+    if model["id"] in SETUP_HOLD or (model.get("source") == "mistral" and model.get("name") == "ministral-8b-2512"):
+        return False
     try:
         checked = datetime.fromisoformat(row["evaluated_at"].replace("Z", "+00:00"))
         age = (datetime.now(timezone.utc) - checked).total_seconds()
