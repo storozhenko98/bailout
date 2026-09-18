@@ -27,7 +27,7 @@ def test_qualifications(monkeypatch):
                "context_length": 128000, "max_output": 8192, "revision": None, "parameters": {}}
               for id in ("a", "b", "c", "d", "coder")]
     models.append({"id": "groq/openai/gpt-oss-120b:free", "source": "groq", "upstream_id": "openai/gpt-oss-120b",
-                   "context_length": 131072, "max_output": 4096, "revision": None, "parameters": {"reasoning_effort": "low"}})
+                   "context_length": 131072, "max_output": 4096, "revision": None, "parameters": {"reasoning_effort": "low", "parallel_tool_calls": False}})
     rows = [qualification(m) for m in models]
     # Keep the established recovery fixtures in A -> Groq -> B order, based on
     # measured test evidence rather than provider special-casing.
