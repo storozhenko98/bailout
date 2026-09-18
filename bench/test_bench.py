@@ -159,17 +159,20 @@ class ScoringTests(unittest.TestCase):
         selected = run.select_candidates(candidates, prior, 2, start.isoformat())
         self.assertEqual([m['id'] for m in selected], [candidates[0]['id'], candidates[1]['id']])
 
-    def test_quota_retry_uses_same_model_and_counts_every_attempt(self):
+    def test_controller_preserves_throttle_for_real_cli_without_hidden_retries(self):
         busy = (json.dumps({'type': 'error', 'code': 'free_capacity_exhausted', 'retry_after_seconds': 60}) + '\n').encode()
         done = b'{"type":"done","message":{"content":"ok"}}\n'
         body = {'candidate': MODEL['id'], 'fingerprint': MODEL['fingerprint']}
         meter = {'requests': 0, 'max': 3, 'lock': threading.Lock()}
         with patch.object(run, 'api', side_effect=[busy, done]) as upstream, patch.object(run.time, 'sleep') as sleep:
             result, events = run.forward('https://unused.test', 'controller-secret', body, meter)
+            self.assertEqual(result, busy)
+            self.assertEqual(events[0]['retry_after_seconds'], 60)
+            result, events = run.forward('https://unused.test', 'controller-secret', body, meter)
         self.assertEqual(result, done)
         self.assertEqual(meter['requests'], 2)
         self.assertEqual(len(events), 1)
-        sleep.assert_called_once_with(60.25)
+        sleep.assert_not_called()
         self.assertTrue(all(call.args[3] is body for call in upstream.call_args_list))
         meter['max'] = 2
         with patch.object(run, 'api') as upstream, self.assertRaises(ValueError):

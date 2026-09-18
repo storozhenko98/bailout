@@ -54,6 +54,7 @@ class Failure(Exception):
         self.failed_models = []
         self.retry_after_seconds = None
         self.provider_error_code = None
+        self.diagnostic = None  # Evaluation-only, fixed metadata; never bodies.
         super().__init__(message)
 
     def payload(self):
@@ -67,6 +68,8 @@ class Failure(Exception):
             result["error"] += f" Retry after {self.retry_after_seconds} seconds."
         if self.provider_error_code is not None:
             result["provider_error_code"] = self.provider_error_code
+        if self.diagnostic is not None:
+            result["diagnostic"] = self.diagnostic
         return result
 
 
@@ -525,6 +528,8 @@ class Router:
                                 except Failure:
                                     error = {}
                                 failure = upstream_failure(status, error, source)
+                                if self.evaluation:
+                                    failure.diagnostic = {"upstream_status": status}
                                 if source in {"groq", "mistral"} and status == 429 and not model.get("quota"):
                                     failure.scope = "provider"  # unsplit account bucket
                                 failure.retry_after_seconds = retry_seconds(getattr(response, "retry_after", None)) or failure.retry_after_seconds
@@ -545,8 +550,10 @@ class Router:
                         last = exc
                     except TimeoutError:
                         last = upstream_failure(429, {}) if response is not None and response.status == 429 else Failure(504, "The model did not respond in time.", code="provider_timeout")
-                    except Exception:
+                    except Exception as exc:
                         last = upstream_failure(429, {}) if response is not None and response.status == 429 else Failure(502, "The provider connection failed or returned an invalid response.", code="provider_unavailable")
+                        if self.evaluation:
+                            last.diagnostic = {"exception_type": type(exc).__name__[:64]}
                     finally:
                         if response is not None:
                             try:

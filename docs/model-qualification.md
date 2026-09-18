@@ -96,10 +96,10 @@ workflow reruns; production provider quotas and the hosting allowance still appl
 The authenticated evaluator allows up to 1,000 admissions per hour for release
 verification, with 30-per-minute pacing and a 5,000-per-day ceiling. Public
 client limits are unchanged. Catalog reads also consume evaluator admissions.
-Evaluation never switches models. The controller may retry the same conversation
-twice for transient provider failures or short quota delays, honoring delays up to 65 seconds within a 165-second
-request deadline. Every retry counts toward both evaluation and provider quotas.
-Failed attempts are buffered and discarded; partial tool calls cannot run. Daily
+Evaluation never switches models. The real CLI handles temporary refusals using
+its shipped retry policy; the controller adds no hidden retries. Every submitted
+attempt counts toward evaluation limits, and every upstream attempt reserves
+provider capacity. Failed attempts are buffered and discarded; partial tool calls cannot run. Daily
 quota exhaustion ends the run as inconclusive. Each result belongs to its candidate,
 whose metadata fingerprint is rechecked before inference.
 Working routes due for a weekly regression check are prioritized, followed by

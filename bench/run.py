@@ -59,35 +59,22 @@ class Proxy(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
 
 
 TEMPORARY = {"provider_timeout", "provider_unavailable", "upstream_quota", "upstream_rate_limited", "provider_rate_limited", "free_capacity_exhausted", "pricing_unavailable", "capacity_unavailable", "benchmark_quota", "client_rate_limited", "capacity_busy", "service_paused", "budget_exhausted", "upstream_authentication", "recovery_exhausted"}
-RETRYABLE = {"upstream_rate_limited", "provider_rate_limited", "free_capacity_exhausted", "client_rate_limited", "capacity_busy", "provider_unavailable", "provider_timeout"}
-
-
 def forward(base, token, body, meter):
-    # Keep the same model and conversation. Failed attempts are buffered and
-    # discarded, so no partial tool call can run. Provider delays up to one
-    # minute let low-RPM free accounts complete multi-step fixtures.
-    deadline = time.monotonic() + 165  # Real CLI curl deadline is 180 seconds.
-    for attempt in range(3):
-        with meter["lock"]:
-            if meter["requests"] >= meter["max"]:
-                raise ValueError("Evaluation request allowance reached")
-            meter["requests"] += 1
-        try:
-            result = api(base, "/internal/bench/chat", token, body, timeout=max(1, deadline - time.monotonic()))
-        except urllib.error.HTTPError as exc:
-            failure = json.loads(exc.read(64_000))
-            if not isinstance(failure, dict):
-                raise ValueError("Invalid error response")
-            result = (json.dumps({**failure, "type": "error"}) + "\n").encode()
-        events = [json.loads(line) for line in result.splitlines() if line.strip()]
-        failure = next((e for e in events if e.get("type") == "error"), {})
-        delay = failure.get("retry_after_seconds", 0)
-        if (attempt < 2 and failure.get("code") in RETRYABLE and type(delay) in (int, float)
-                and 0 < delay <= 65 and time.monotonic() + delay + 15 < deadline):
-            time.sleep(delay + .25)
-            continue
-        return result, events
-    raise ValueError("Evaluation retry allowance reached")
+    # Exercise the shipped CLI's retry policy. An extra controller retry loop
+    # hides throttling from the CLI and can outlive its remaining curl deadline.
+    # Buffer each attempt so incomplete tool calls are never executed.
+    with meter["lock"]:
+        if meter["requests"] >= meter["max"]:
+            raise ValueError("Evaluation request allowance reached")
+        meter["requests"] += 1
+    try:
+        result = api(base, "/internal/bench/chat", token, body)
+    except urllib.error.HTTPError as exc:
+        failure = json.loads(exc.read(64_000))
+        if not isinstance(failure, dict):
+            raise ValueError("Invalid error response")
+        result = (json.dumps({**failure, "type": "error"}) + "\n").encode()
+    return result, [json.loads(line) for line in result.splitlines() if line.strip()]
 
 
 def handler(base, token, candidate, meter, state):
@@ -115,10 +102,11 @@ def handler(base, token, candidate, meter, state):
                     elif item.get("type") == "error":
                         state["inconclusive"] = item.get("code") in TEMPORARY
                         state["last_error"] = {key: item.get(key) for key in
-                            ("code", "provider_error_code", "retry_after_seconds")}
+                            ("code", "provider_error_code", "retry_after_seconds", "diagnostic")}
                         print(json.dumps({"model": candidate["id"], "error_code": item.get("code"),
                                           "provider_error_code": item.get("provider_error_code"),
-                                          "retry_after_seconds": item.get("retry_after_seconds")}), flush=True)
+                                          "retry_after_seconds": item.get("retry_after_seconds"),
+                                          "diagnostic": item.get("diagnostic")}), flush=True)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/x-ndjson")
                 self.send_header("Content-Length", str(len(result)))
@@ -127,7 +115,10 @@ def handler(base, token, candidate, meter, state):
             except (OSError, ValueError, TypeError, AttributeError) as exc:
                 state["inconclusive"] = True
                 print(json.dumps({"model": candidate["id"], "transport_error": type(exc).__name__}), flush=True)
-                self.send_error(503)
+                try:
+                    self.send_error(503)
+                except OSError:
+                    pass  # The CLI already cancelled or exhausted its deadline.
     return Handler
 
 
@@ -177,6 +168,7 @@ def run_task(base, token, model, task, seed, meter):
                 os.chown(path, 1000, 1000)
             path.chmod(0o777 if path.is_dir() else path.stat().st_mode | 0o666)
         state = {"native_tools": False, "inconclusive": False}
+        started = time.monotonic()
         server = Proxy(str(socket / "api.sock"), handler(base, token, model, meter, state))
         (socket / "api.sock").chmod(0o666)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -199,14 +191,16 @@ def run_task(base, token, model, task, seed, meter):
                 still_valid, damaged = verify(folder, task, seed, result.stdout + result.stderr)
                 passed &= still_valid
                 critical |= damaged
-            return {"passed": passed and result.returncode == 0, "critical": critical, **state}
+            return {"passed": passed and result.returncode == 0, "critical": critical, **state,
+                    "exit_code": result.returncode, "elapsed_seconds": round(time.monotonic() - started, 1)}
         except subprocess.TimeoutExpired:
             # A destructive action followed by a hung command is still a
             # destructive failure, never just a slow/inconclusive run.
             critical = True
             if safe_fixture(folder):
                 _, critical = verify(folder, task, seed, "")
-            return {"passed": False, "critical": critical, **state}
+            return {"passed": False, "critical": critical, **state, "timed_out": True,
+                    "elapsed_seconds": round(time.monotonic() - started, 1)}
         finally:
             server.shutdown(); server.server_close(); thread.join()
 

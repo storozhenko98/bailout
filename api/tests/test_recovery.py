@@ -80,6 +80,20 @@ async def stream(route, request):
     return [json.loads(e) async for e in route.stream_chat(request, candidates)]
 
 
+@pytest.mark.parametrize('evaluation', [False, True])
+@pytest.mark.parametrize('response,diagnostic', [
+    (lambda: error(503), {'upstream_status': 503}),
+    (lambda: ConnectionError('private echoed prompt and credentials'), {'exception_type': 'ConnectionError'}),
+])
+async def test_evaluation_diagnostics_identify_protocol_failure_without_echoing_private_data(evaluation, response, diagnostic):
+    route = Router(Sequence([response()]), 'test')
+    route.evaluation = evaluation
+    events = await stream(route, data('test/a:free', stream=True))
+    assert events[-1]['type'] == 'error'
+    assert events[-1].get('diagnostic') == (diagnostic if evaluation else None)
+    assert 'private echoed' not in json.dumps(events)
+
+
 @pytest.mark.parametrize("failure", [
     lambda: error(503),
     lambda: TimeoutError(), lambda: ConnectionError(),
