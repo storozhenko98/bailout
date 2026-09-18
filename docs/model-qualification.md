@@ -78,7 +78,7 @@ until qualified.
 dispatch. Manual runs accept up to two exact candidate IDs for bootstrap or
 regression checks; blank input uses the same rotation as the scheduled job.
 It evaluates up to two models and 80 inference requests per run. The
-gateway independently caps evaluation at 500 requests per UTC day, shared across
+gateway independently caps evaluation at 1,000 requests per UTC day, shared across
 workflow reruns; production provider quotas and the hosting allowance still apply.
 Evaluation never switches models. The controller may retry the same conversation
 twice for transient provider failures or short quota delays, honoring delays up to 65 seconds within a 165-second

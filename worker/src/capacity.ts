@@ -26,7 +26,7 @@ export class CapacityLedger {
       const day = Math.floor(now / 86400000);
       this.sql.exec('DELETE FROM benchmark_usage WHERE day < ?', day);
       const used = [...this.sql.exec<{ requests: number }>('SELECT requests FROM benchmark_usage WHERE day = ?', day)][0]?.requests ?? 0;
-      if (used >= 500) return { status: 429, body: { error: 'Daily evaluation request allowance reached.', code: 'benchmark_quota', retry_after_seconds: Math.ceil(((day + 1) * 86400000 - now) / 1000) } };
+      if (used >= 1000) return { status: 429, body: { error: 'Daily evaluation request allowance reached.', code: 'benchmark_quota', retry_after_seconds: Math.ceil(((day + 1) * 86400000 - now) / 1000) } };
       this.sql.exec('INSERT INTO benchmark_usage VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET requests = requests + 1', day);
       return { status: 200, body: { ok: true } };
     });
