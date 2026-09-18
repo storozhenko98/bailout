@@ -1,6 +1,6 @@
 # Link previews
 
-The homepage and field guide provide page-specific Open Graph and X card metadata
+The homepage, field guide and demo provide page-specific Open Graph and X card metadata
 in the initial HTML. Link crawlers do not need JavaScript, cookies, a login, or
 access to the model API. Canonical URLs, the public sitemap and robots file remain
 consistent. No analytics SDK or third-party script is added.
@@ -31,3 +31,9 @@ Preview metadata improves the shared link's presentation; it does not guarantee
 distribution, ranking, clicks, or an immediate refresh of old shared messages.
 
 Metadata follows the [Open Graph protocol](https://ogp.me/).
+
+The `/demo/` page hosts a silent MP4 of a real public-service terminal session,
+with a GIF preview in the GitHub README. It reuses the homepage's share artwork.
+Video waits are shortened and labeled; the original asciicast retains the full
+timing. See [recording and verification](../demo/README.md). No social post is
+created by building or deploying these assets.

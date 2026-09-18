@@ -37,7 +37,7 @@ def png_size(data):
 
 def local_check():
     assets = set()
-    for page in ['/', '/docs/']:
+    for page in ['/', '/docs/', '/demo/']:
         raw = (ROOT / 'site' / page.lstrip('/') / 'index.html').read_text()
         assert len(raw.encode()) < 1_000_000
         head = Head(raw)
@@ -63,9 +63,9 @@ def local_check():
         assets.add(icon['href'])
         assert any(x.get('type') == 'image/png' and x.get('sizes') == '512x512' for x in head.links)
     assert 'Disallow: /\n' not in (ROOT / 'site/robots.txt').read_text()
-    for page in ['/', '/docs/']:
+    for page in ['/', '/docs/', '/demo/']:
         assert ORIGIN + page in (ROOT / 'site/sitemap.xml').read_text()
-    print('PASS: homepage and docs have static OG/X cards, canonical URLs, crawlable PNG assets and Apple icons')
+    print('PASS: homepage, docs and demo have static OG/X cards, canonical URLs, crawlable PNG assets and Apple icons')
     return sorted(assets | {'/icon-512.png', '/favicon-32.png'})
 
 
@@ -94,7 +94,7 @@ def live_check(assets):
         return f'{agent}: {page} 200, metadata matches'
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        for result in pool.map(page_check, [(page, agent) for page in ['/', '/docs/'] for agent in agents]):
+        for result in pool.map(page_check, [(page, agent) for page in ['/', '/docs/', '/demo/'] for agent in agents]):
             print(result)
     for asset in assets:
         headers, data = fetch(ORIGIN + asset, 'Twitterbot/1.0')

@@ -19,6 +19,10 @@ and the usual base utilities (including tar and a SHA-256 utility).
 
 [Website](https://bailout.dev) · [Setup & recovery guide](https://bailout.dev/docs/) · [Releases](https://github.com/storozhenko98/bailout/releases/latest)
 
+[![A real Bailout terminal session: install OpenCode on a fresh Linux box, then delete Bailout](site/demo/bailout-demo-v1.gif)](https://bailout.dev/demo/)
+
+[Watch the full-size video](https://bailout.dev/demo/). Real Ubuntu ARM64 container, public Auto routing, no local API key. Waits shortened; terminal output unchanged. Sign-in is skipped.
+
 ## When you need it
 
 **A clean slate.** Boot an EC2 instance, a GCP VM, or a new Mac. Ask bailout to
@@ -31,13 +35,13 @@ what changed, back up the config, repair it, and verify that your main tool work
 
 **A quick exit.** The useful outcome is your usual setup working again. Bailout has
 no daemon, account setup, persistent conversation store, or project scaffolding.
-It is one native binary: **622.1 KB on Apple Silicon** in v0.7.0. Every release stays under
+It is one native binary: **622.1 KB on Apple Silicon** in v0.7.2. Every release stays under
 6,000,000 bytes. Linux releases are statically linked with musl.
 
 ```text
 $ bailout
 
-  bailout v0.7.0
+  bailout v0.7.2
   ~
 
   › auto · free models · full access
@@ -133,7 +137,9 @@ zero-price cap are what enforce this app's free-only policy. Like any client, th
 app depends on OpenRouter honoring its published prices and routing contract.
 
 The router qualifies models using Bailout's own setup-and-repair benchmark.
-Models need repeated passing runs, native Bash calls, and no critical failures.
+Models need at least 80% success on a complete ten-task run, native Bash calls,
+and no critical failures. Repeat runs refresh that evidence; reproduced live
+regressions can hold a model out even when its synthetic score passes.
 Unrecognized models remain outside production. Rankings combine measured task
 success with aggregate route health; context length, model names and marketing
 copy do not earn intelligence points. The nightly workflow publishes versioned
@@ -192,13 +198,13 @@ See [how the public counters work](docs/public-stats.md).
 
 ## Measured release sizes
 
-From the [published v0.7.0 assets](https://github.com/storozhenko98/bailout/releases/tag/v0.7.0), verified against SHA-256 checksums:
+From the [published v0.7.2 assets](https://github.com/storozhenko98/bailout/releases/tag/v0.7.2), verified against SHA-256 checksums:
 
 | Platform | Native binary (uncompressed) | Download (.tar.gz) |
 | --- | ---: | ---: |
-| macOS ARM64 | 622,080 bytes | 316,634 bytes |
-| Linux x64 | 844,576 bytes | 416,082 bytes |
-| Linux ARM64 | 790,784 bytes | 395,774 bytes |
+| macOS ARM64 | 622,064 bytes | 317,019 bytes |
+| Linux x64 | 844,576 bytes | 416,433 bytes |
+| Linux ARM64 | 790,784 bytes | 396,333 bytes |
 
 ## Build and test
 
@@ -234,7 +240,7 @@ CI runs the tests and real binary smoke checks on all three supported platforms.
 Tagging `vX.Y.Z` builds native release assets, tests them, enforces the size ceiling,
 and publishes SHA-256 checksums. The installer pins one resolved release version,
 verifies the archive checksum, checks its contents and binary size, then installs
-atomically. Set `BAILOUT_VERSION=v0.7.0` or `BAILOUT_INSTALL_DIR=/your/bin` to override.
+atomically. Set `BAILOUT_VERSION=v0.7.2` or `BAILOUT_INSTALL_DIR=/your/bin` to override.
 It prefers an existing writable PATH location and never uses sudo or modifies shell rc files.
 
 Starting in v0.4.0, each launch checks the official GitHub stable release. A newer
