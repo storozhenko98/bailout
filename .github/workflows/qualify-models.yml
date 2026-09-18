@@ -14,8 +14,7 @@ on:
     inputs:
       progress_group:
         description: 'Checkpoint group to resume (independent provider jobs can run concurrently).'
-        type: choice
-        options: [nightly, groq, zai, vercel]
+        type: string
         default: nightly
       models:
         description: 'Optional: up to two exact candidate IDs, separated by spaces. Blank uses nightly rotation.'
