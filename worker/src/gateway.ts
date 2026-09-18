@@ -1,5 +1,5 @@
 import type { Env, HttpResult } from "./types.js";
-import { BudgetLedger, budgetRefusal, refusal } from './budget.js';
+import { BudgetLedger, POLICY, budgetRefusal, refusal } from './budget.js';
 import { PublicStats, publicStatsResponse } from './stats.js';
 import { CapacityLedger, PROVIDERS } from './capacity.js';
 import { Rankings } from './rankings.js';
@@ -8,7 +8,7 @@ export class BudgetGuard {
   rankings: Rankings; ctx: DurableObjectState; ledger: BudgetLedger; capacity: CapacityLedger; providers: string[]; stats: PublicStats;
   constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
-    this.ledger = new BudgetLedger(ctx.storage, Number(env.BUDGET_ALLOWANCE_MICRO_USD), Number(env.CHAT_ADMISSIONS_PER_MINUTE || 60));
+    this.ledger = new BudgetLedger(ctx.storage, Number(env.BUDGET_ALLOWANCE_MICRO_USD), Number(env.CHAT_ADMISSIONS_PER_MINUTE || POLICY.chatMinute));
     this.capacity = new CapacityLedger(ctx.storage);
     this.rankings = new Rankings(ctx.storage);
     this.providers = (env.PROVIDER_POOL || 'openrouter').split(',').filter(p => Object.hasOwn(PROVIDERS, p));

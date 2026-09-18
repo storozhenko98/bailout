@@ -89,6 +89,15 @@ function runtime(allowance, api) {
   }] }));
 }
 
+test('public runtime status uses the current policy without a stale deployment default', async () => {
+  const mf = runtime(POLICY.allowanceMicroUsd, () => Response.json({}));
+  try {
+    const response = await mf.dispatchFetch('https://api.test/v1/status', { headers: { 'CF-Connecting-IP': '192.0.2.1' } });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).limits, POLICY);
+  } finally { await mf.dispose(); }
+});
+
 test('real Workers runtime serializes concurrent reservations; denied calls never reach backend', async () => {
   let upstream = 0;
   const mf = runtime(620, async req => { upstream++; assert.equal(req.headers.get('Authorization'), null); return Response.json({ ok: true }); });
