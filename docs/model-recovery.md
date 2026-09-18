@@ -9,8 +9,10 @@ request can retry that model, but never silently changes it.
 
 One model response has at most **four upstream attempts** and a **120-second
 end-to-end deadline**, including eligibility checks, capacity waits and retries.
-Auto gives each inference at most 40 seconds. A legacy pinned attempt gets at most
-90 seconds within the same deadline. There is no unbounded retry loop.
+Auto gives each inference at most 40 seconds when other qualified routes are in
+the candidate list. With just one candidate, it allows up to 90 seconds, as does a
+legacy pinned attempt. The overall request deadline still applies. There is no
+unbounded retry loop.
 
 - A temporary HTTP 429 gets one delayed retry of the same model. Respect numeric
   or HTTP-date `Retry-After`, add jitter, and wait at most 10 seconds for that retry.

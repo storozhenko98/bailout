@@ -207,6 +207,25 @@ async def test_retry_after_is_preserved_for_provider_cooldown():
     assert result["cooldown_seconds"] == 600
 
 
+async def test_single_auto_route_can_use_response_window_but_not_exceed_request_deadline(monkeypatch):
+    monkeypatch.setattr(policy, "AUTO_ATTEMPT_SECONDS", .01)
+    monkeypatch.setattr(policy, "PINNED_ATTEMPT_SECONDS", .2)
+    class Delayed(Response):
+        async def chunks(self):
+            await asyncio.sleep(.04)
+            yield sse(dict(choices=[dict(delta=dict(content="Ready"), finish_reason="stop")]))
+    for deadline, expected in [(.5, "done"), (.02, "error")]:
+        monkeypatch.setattr(policy, "REQUEST_SECONDS", deadline)
+        response = Delayed(None)
+        stub = Sequence([response])
+        stub.catalog = [model("test/a:free")]
+        events = await stream(Router(stub, "test"), data(stream=True))
+        assert events[-1]["type"] == expected
+        assert len(stub.inferences()) == 1 and response.closed
+        if expected == "error":
+            assert "did not respond in time" in events[-1]["error"]
+
+
 async def test_switch_strips_opaque_reasoning_but_keeps_completed_tools():
     stub = Sequence([error(503), Response(completion())])
     request = data()

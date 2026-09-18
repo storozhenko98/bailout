@@ -462,7 +462,10 @@ class Router:
                             break
                     attempts += 1
                     response, completed = None, None
-                    timeout = min(AUTO_ATTEMPT_SECONDS if auto else PINNED_ATTEMPT_SECONDS, self.remaining())
+                    # Reserve fallback time when there are other qualified routes.
+                    # With one route, give it the normal response window instead
+                    # of aborting early for a fallback that does not exist.
+                    timeout = min(AUTO_ATTEMPT_SECONDS if auto and len(candidates) > 1 else PINNED_ATTEMPT_SECONDS, self.remaining())
                     selected = {"type": "model", "model": model["id"], "provider": source, "attempt": attempts,
                                 "context": {k: v for k, v in fit.items() if k != "endpoints"}}
                     if context_skipped:
@@ -583,7 +586,7 @@ class Router:
                 raise last
             if last.scope == "provider" or not attempts:
                 raise last
-            exhausted = Failure(503, f"No free route completed after {attempts} attempt(s). Please try again later. No paid fallback was used.", code="recovery_exhausted", recoverable=False)
+            exhausted = Failure(503, f"No free route completed after {attempts} attempt(s). {last.message} No paid fallback was used.", code="recovery_exhausted", recoverable=False)
             exhausted.retry_after_seconds = max(60, last.retry_after_seconds or 0)
             raise exhausted
         except Failure as exc:
