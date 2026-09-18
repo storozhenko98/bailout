@@ -220,6 +220,18 @@ test('daily provider allowance survives restarts and does not double on midnight
   assert.equal(later.reserve('openrouter', 'test/a:free', 0, now + 86400000).ok, true);
 });
 
+test('ZAI free models admit one in-flight request each and release completed work', () => {
+  const { storage } = ledger(); const capacity = new CapacityLedger(storage);
+  const first = capacity.reserve('zai', 'zai/glm-4.7-flash:free', 100, now);
+  assert.equal(first.ok, true);
+  const denied = new CapacityLedger(storage).reserve('zai', 'zai/glm-4.7-flash:free', 100, now);
+  assert.equal(denied.code, 'route_busy'); assert.equal(denied.scope, 'model');
+  assert.equal(capacity.reserve('zai', 'zai/glm-4.5-flash:free', 100, now).ok, true);
+  assert.equal(capacity.reserve('openrouter', 'test/a:free', 100, now).ok, true);
+  capacity.settle(first.permit, 50);
+  assert.equal(capacity.reserve('zai', 'zai/glm-4.7-flash:free', 100, now).ok, true);
+});
+
 test('100 concurrent provider attempts admit only the rolling allowance in the real Workers runtime', async () => {
   const mf = runtime(35000000, () => Response.json({}));
   try {

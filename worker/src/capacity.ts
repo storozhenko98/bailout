@@ -46,7 +46,10 @@ export class CapacityLedger {
       if (limits.tpm && tokens > limits.tpm) return { ok: false, code: 'route_context_capacity', scope, retry_after_seconds: 0 };
       const rows = [...this.sql.exec<Attempt>('SELECT started, tokens, route, pending FROM inference_attempts WHERE provider = ? ORDER BY started', provider)];
       const running = rows.filter(r => r.pending && r.started > now - 120000);
-      if (running.filter(r => r.route === model).length >= 2) return { ok: false, code: 'route_busy', scope: 'model', retry_after_seconds: 2 };
+      // ZAI's free Flash routes can allow only one in-flight request. Keep
+      // their admission serial; other eligible models can still serve users.
+      const modelConcurrency = provider === 'zai' ? 1 : 2;
+      if (running.filter(r => r.route === model).length >= modelConcurrency) return { ok: false, code: 'route_busy', scope: 'model', retry_after_seconds: 2 };
       if (running.length >= 8) return { ok: false, code: 'provider_capacity', scope: 'provider', retry_after_seconds: 2 };
       let wait = 0;
       for (const [duration, requests, budget] of [[60000, limits.rpm, limits.tpm], [86400000, limits.rpd, limits.tpd]]) {

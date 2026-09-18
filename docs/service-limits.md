@@ -105,6 +105,9 @@ balance or allowance restrictions; `1311` marks the model unavailable on the
 account; `1313` stops for account policy. Errors may include the numeric
 `provider_error_code` for diagnosis. Provider response bodies are never exposed
 or logged, and no error enables paid access.
+The shared ledger admits at most one in-flight request per ZAI model, matching
+the lower concurrency available on its free Flash routes. Other eligible models
+and independent providers remain available while that model is busy.
 
 `GET /v1/status` reports the conservative reservation counter and limits, never
 credentials or conversations. It also refuses when the allowance is exhausted.
