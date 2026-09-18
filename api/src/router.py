@@ -73,6 +73,21 @@ class Failure(Exception):
         return result
 
 
+def tool_failure_diagnostic(result):
+    """Boolean protocol clues only; never return generated arguments or text."""
+    error = result.get('error', {}) if isinstance(result, dict) else {}
+    if not isinstance(error, dict):
+        return {}
+    raw = json.dumps(error).lower().replace('\\"', '"')
+    return {'tool_validation': {
+        'mentions_schema': 'schema' in raw,
+        'mentions_json': 'json' in raw,
+        'mentions_length': any(s in raw for s in ('max_tokens', 'max_completion_tokens', 'token limit', 'truncated')),
+        **{f'null_{name}': bool(re.search(r'"' + name + r'"\s*:\s*null', raw))
+           for name in ('workdir', 'timeout_ms', 'interactive')},
+    }}
+
+
 def upstream_failure(status, result, source=None):
     """Classify without exposing or storing provider bodies (which can echo prompts)."""
     error = result.get("error", {}) if isinstance(result, dict) else {}
@@ -550,6 +565,8 @@ class Router:
                                 failure = upstream_failure(status, error, source)
                                 if self.evaluation:
                                     failure.diagnostic = {"upstream_status": status}
+                                    if failure.code == 'invalid_tool_response':
+                                        failure.diagnostic.update(tool_failure_diagnostic(error))
                                 if source in {"groq", "mistral"} and status == 429 and not model.get("quota"):
                                     failure.scope = "provider"  # unsplit account bucket
                                 failure.retry_after_seconds = retry_seconds(getattr(response, "retry_after", None)) or failure.retry_after_seconds
@@ -717,6 +734,8 @@ class Router:
                         failure = upstream_failure(502, frame, source)
                         if self.evaluation:
                             failure.diagnostic = {"stream_error": True}
+                            if failure.code == 'invalid_tool_response':
+                                failure.diagnostic.update(tool_failure_diagnostic(frame))
                         raise failure
                     if frame.get("usage") or frame.get("x_groq", {}).get("usage"):
                         usage = frame.get("usage") or frame["x_groq"]["usage"]

@@ -63,6 +63,16 @@ def test_groq_generated_tool_failure_can_fall_back_without_echoing_generated_com
     assert 'private model' not in json.dumps(failure.payload())
 
 
+def test_tool_diagnostics_are_boolean_schema_clues_never_generated_text():
+    result = policy.tool_failure_diagnostic({'error': {'message': 'Tool schema failure: secret',
+        'failed_generation': '{"command":"echo private credential", "workdir":null, "timeout_ms":null}'}})
+    assert result['tool_validation']['mentions_schema']
+    assert result['tool_validation']['null_workdir']
+    assert result['tool_validation']['null_timeout_ms']
+    assert all(type(v) is bool for v in result['tool_validation'].values())
+    assert 'credential' not in json.dumps(result) and 'secret' not in json.dumps(result)
+
+
 async def test_groq_streamed_tool_failure_is_not_misclassified_as_provider_outage():
     response = Response(None, raw=sse(dict(error=dict(type='invalid_request_error', failed_generation='private command'))))
     with pytest.raises(Failure) as caught:
