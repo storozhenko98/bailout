@@ -62,9 +62,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif prompt in ('local login', 'cancel login'):
             command = 'read -r -s -p "Local token: " token; test -n "$token"; printf "\\nLocal auth complete\\n"'
             message = dict(role='assistant', content=None, tool_calls=[dict(id='local_1', type='function', function=dict(name='bash', arguments=json.dumps(dict(command=command, interactive=True))))])
-        elif prompt in ('create hello.txt', 'wait bash', 'broken stream', 'auto recovery', 'pinned mismatch'):
+        elif prompt in ('create hello.txt', 'wait bash', 'broken stream', 'auto recovery', 'pinned mismatch', 'shell startup probe'):
             command = "printf 'hello bailout\\n' > hello.txt; cat hello.txt"
             if prompt == 'wait bash': command = 'sleep 30 & echo $! > child.pid; wait'
+            if prompt == 'shell startup probe': command = "bash --noprofile --norc -i -c 'printf shell-startup-ok'"
             if prompt in ('auto recovery', 'pinned mismatch'): command = "printf 'once\\n' >> recovery-count.txt"
             message = dict(role='assistant', content=None, tool_calls=[dict(id='call_1', type='function', function=dict(name='bash', arguments=json.dumps(dict(command=command))))])
         else:
@@ -232,6 +233,12 @@ with tempfile.TemporaryDirectory(prefix='bailout-smoke-') as folder:
         terminal.send('/model\r')
         terminal.expect('Auto routing chooses an available free model.')
         terminal.prompt()
+        terminal.send('shell startup probe\r')
+        terminal.expect('Created and verified')
+        terminal.prompt()
+        probe = json.loads(calls[-1]['messages'][-1]['content'])
+        assert probe['exit_code'] == 0 and not probe['timed_out']
+        assert 'shell-startup-ok' in probe['output']
         terminal.send('local login\r')
         terminal.expect('Local token: ')
         terminal.send('fixture-secret-value\r')

@@ -125,8 +125,20 @@ fn execute_observed(
     limit: usize,
     mut observer: Observer<'_>,
 ) -> Result<Execution> {
+    // Captured commands must not inherit our controlling terminal. A nested
+    // `bash -i -c ...` otherwise stops itself with SIGTTIN while waiting for
+    // foreground ownership. A new session also has its own process group,
+    // preserving cancellation of pipelines and grandchildren. Explicit local
+    // terminal handoffs use local::interactive and are unaffected.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
     command
-        .process_group(0)
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
