@@ -202,6 +202,9 @@ keys/accounts to evade an upstream account's limits.
 
 On 2026-09-18, Groq's live headers confirmed independent remaining-request counts
 for `openai/gpt-oss-120b` and `qwen/qwen3.8-27b`, each with 1,000 RPD and 8,000 TPM.
+`openai/gpt-oss-20b` uses the same documented free quota in an independent model
+pool. All three are configured with 28 RPM, 950 RPD, 7,800 TPM and 190,000 TPD
+headroom; each still requires its own completed passing qualification.
 The [official Free-plan table](https://console.groq.com/docs/rate-limits) also lists
 30 RPM and 200,000 TPD for each. Bailout reserves 28 RPM, 950 RPD, 7,800 TPM and
 190,000 TPD per model, retaining existing usage rather than resetting counters.

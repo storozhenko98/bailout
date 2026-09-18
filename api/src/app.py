@@ -20,7 +20,7 @@ def binding(request, name, default=None):
 
 
 def router(request):
-    capacity = Capacity(binding(request, "CAPACITY")) if request.scope.get("env") is not None else LocalCapacity()
+    capacity = Capacity(binding(request, "CAPACITY"), diagnostics=request.url.path.startswith("/internal/bench/")) if request.scope.get("env") is not None else LocalCapacity()
     try:
         accounts = json.loads(binding(request, "FREE_ACCOUNTS", "{}"))
         if not isinstance(accounts, dict):

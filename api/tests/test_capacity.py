@@ -44,6 +44,19 @@ async def test_worker_binding_fails_closed_on_transport_error():
     assert "private transport" not in str(error.value)
 
 
+async def test_capacity_timeout_allows_bounded_client_retry_without_inference_or_raw_errors():
+    class Binding:
+        def getByName(self, name):
+            raise TimeoutError('private capacity transport details')
+    with pytest.raises(Failure) as caught:
+        await Capacity(Binding(), diagnostics=True).reserve('groq', GROQ_MODEL, 100)
+    failure = caught.value
+    assert failure.code == 'capacity_busy' and failure.retry_after_seconds == 5
+    assert not failure.recoverable
+    assert failure.payload()['diagnostic'] == {'capacity_exception_type': 'TimeoutError'}
+    assert 'private capacity' not in json.dumps(failure.payload())
+
+
 class Meter(LocalCapacity):
     def __init__(self, deny=None):
         self.calls, self.cooldowns, self.settlements = [], [], []

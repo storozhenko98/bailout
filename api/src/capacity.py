@@ -4,8 +4,9 @@ import json
 
 
 class Capacity:
-    def __init__(self, binding):
+    def __init__(self, binding, *, diagnostics=False):
         self.binding = binding
+        self.diagnostics = diagnostics
 
     async def call(self, action, **data):
         from router import Failure
@@ -20,8 +21,18 @@ class Capacity:
                 if response.status != 200:
                     raise ValueError("Capacity service unavailable")
                 return json.loads(await response.text())
-        except Exception:
-            raise Failure(503, "Shared provider capacity could not be checked. No further inference was sent.", code="capacity_unavailable", recoverable=False) from None
+        except Exception as exc:
+            timed_out = isinstance(exc, TimeoutError)
+            failure = Failure(503, "Shared provider capacity could not be checked. No further inference was sent.",
+                              code="capacity_busy" if timed_out else "capacity_unavailable", recoverable=False)
+            if timed_out:
+                # Stop this attempt without inference. A later CLI request can
+                # retry admission; any ambiguous reservation remains counted
+                # conservatively and its concurrency lease expires normally.
+                failure.retry_after_seconds = 5
+            if self.diagnostics:
+                failure.diagnostic = {"capacity_exception_type": type(exc).__name__[:64]}
+            raise failure from None
 
     async def reserve(self, provider, model, tokens, quota=None):
         return await self.call("reserve", provider=provider, model=model, tokens=tokens, **({"quota": quota} if quota else {}))
