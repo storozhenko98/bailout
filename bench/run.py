@@ -275,7 +275,7 @@ def main():
     if not output:
         raise SystemExit("No complete qualification results. Last valid production ranking is unchanged.")
     target = Path(args.output); target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps({"schema": 1, "suite": SUITE, "generated_at": timestamp, "run_id": run_id,
+    target.write_text(json.dumps({"schema": 1, "suite": SUITE, "generated_at": datetime.now(timezone.utc).isoformat(), "run_id": run_id,
         "harness_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(), "models": output}, indent=2) + "\n")
 
 

@@ -41,6 +41,19 @@ test('unknown fields are stripped and malformed evidence never replaces rankings
   }
 });
 
+test('a newly generated envelope cannot roll a model back to older evidence', () => {
+  const r = new Rankings(storage());
+  r.publish(manifest(), now);
+  const delayed = manifest('test/a:free', now + 10, 'delayed');
+  delayed.models[0].evaluated_at = new Date(now - 1000).toISOString();
+  assert.throws(() => r.publish(delayed, now + 10));
+  assert.equal(r.snapshot(now + 10).run_id, '1');
+  const independent = manifest('test/b:free', now + 20, 'independent');
+  independent.models[0].evaluated_at = new Date(now - 1000).toISOString();
+  r.publish(independent, now + 20);
+  assert.equal(r.snapshot(now + 20).models.length, 2);
+});
+
 test('verified per-model quotas preserve independent pools but retain shared concurrency and cooldown', () => {
   const c = new CapacityLedger(storage());
   const quota = { rpm: 1, rpd: 100, tpm: 5000, tpd: 10000 };

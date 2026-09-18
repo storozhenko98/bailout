@@ -65,7 +65,11 @@ export class Rankings {
       // An incomplete evaluation run cannot erase untested models. Quality
       // evidence expires independently; pricing is always checked live.
       const merged = new Map(previous.models.filter(r => now - Date.parse(r.evaluated_at) <= 30 * 86400000).map(r => [r.id, r]));
-      for (const row of next.models) merged.set(row.id, row);
+      for (const row of next.models) {
+        const existing = merged.get(row.id);
+        if (existing && Date.parse(row.evaluated_at) < Date.parse(existing.evaluated_at)) throw new Error('Older model evidence');
+        merged.set(row.id, row);
+      }
       if (merged.size > 100) throw new Error('Too many models');
       const saved = { ...next, models: [...merged.values()] };
       if (previous.run_id) this.storage.sql.exec('INSERT INTO model_rankings VALUES (2, ?) ON CONFLICT(id) DO UPDATE SET value = excluded.value', JSON.stringify({ ...previous, health: undefined, stale: undefined }));
