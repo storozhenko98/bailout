@@ -43,6 +43,11 @@ conversations well before their actual token allowance.
 native Bash tool against ten synthetic setup/repair scenarios. Validators check
 filesystem state and run repaired programs in a second sandbox. Verbal claims of
 success do not count. Test data contains no real credentials or user conversations.
+The eight-step evaluation ceiling bounds tool use. If a task reaches that ceiling
+after completing its repair, independent filesystem and executable checks can
+still establish success; a closing paragraph is not required. Authentication
+handoff tasks require a completed response. Provider errors and broken repairs
+never pass merely because some files changed.
 
 Qualification requires:
 
@@ -71,7 +76,11 @@ built with variables, using the existing executable checks to decide correctness
 For unfinished v0.7.3 checkpoints only, valid passes and unrelated failures remain;
 noncritical PATH/shell failures are rechecked. This migration is restricted to the
 exact old/new harness-and-fixture signatures. Completed published suites are never
-reused as fresh evidence, and critical failures are retained.
+reused as fresh evidence, and critical failures are retained. A separate, one-time
+outcome-scoring correction rechecks ambiguous noncritical failures previously
+caused by the step cutoff, retaining independently verified passes and explicit
+tool-protocol failures. Corrected tasks complete that same suite; they are not
+counted as another independent full run.
 
 Every qualified model remains eligible to serve users. Rankings score task success
 (0–100 points), recent availability (0–25 points), additional test evidence (up to

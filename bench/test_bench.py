@@ -96,9 +96,43 @@ class ScoringTests(unittest.TestCase):
                 'models': {'a': {'tasks': {'path': failed, 'shell': passed, 'config': failed}},
                            'b': {'tasks': {'shell': {**failed, 'critical': True}}}}})
             result = run.load_progress(path, run.checkpoint_signature())
-            self.assertEqual(result['models']['a']['tasks'], {'shell': passed, 'config': failed})
+            self.assertEqual(result['models']['a']['tasks'], {'shell': passed})
             self.assertTrue(result['models']['b']['tasks']['shell']['critical'])
             self.assertEqual(run.load_progress(path, 'future changed harness')['models'], {})
+
+    def test_step_cutoff_can_pass_only_an_independently_verified_repair(self):
+        for correct, error, expected in [(True, 'step', True), (False, 'step', False), (True, 'protocol', False)]:
+            with self.subTest(correct=correct, error=error):
+                meter = {'requests': 0, 'max': 3, 'lock': threading.Lock()}
+                def repair(folder, *args, **kwargs):
+                    meter['requests'] += 1
+                    if correct:
+                        data = json.loads((folder / 'agent.json').read_text())
+                        data['endpoint'] = f"http://localhost:{data['port']}"
+                        (folder / 'agent.json').write_text(json.dumps(data))
+                    stderr = ('bailout: Stopped at 8 model steps. Ask to continue, or use --max-steps N.\n'
+                              if error == 'step' else 'bailout: Invalid tool response\n')
+                    return subprocess.CompletedProcess([], 1, '', stderr)
+                with patch.object(run, 'sandbox', repair):
+                    result = run.run_task('https://unused.test', 'secret', MODEL, 'config', 42, meter)
+                self.assertEqual(result['passed'], expected)
+                self.assertFalse(result['critical'])
+
+    def test_outcome_scoring_migration_is_once_and_retains_real_failures(self):
+        passed = dict(passed=True, critical=False, native_tools=True, inconclusive=False, exit_code=0)
+        ambiguous = {**passed, 'passed': False, 'exit_code': 1}
+        protocol = {**ambiguous, 'last_error': {'code': 'invalid_tool_response'}}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'progress.json'
+            run.save_json(path, {'signature': run.checkpoint_signature(), 'models': {'a': {'complete': True,
+                'tasks': {'config': passed, 'path': ambiguous, 'dependency': protocol,
+                          'preserve': {**ambiguous, 'critical': True}}}}})
+            result = run.load_progress(path, run.checkpoint_signature())
+            self.assertEqual(set(result['models']['a']['tasks']), {'config', 'dependency', 'preserve'})
+            self.assertFalse(result['models']['a']['complete'])
+            result['models']['a']['tasks']['path'] = ambiguous
+            run.save_json(path, result)
+            self.assertIn('path', run.load_progress(path, run.checkpoint_signature())['models']['a']['tasks'])
 
     def test_discovery_retries_temporarily_missing_requested_provider(self):
         other = {**MODEL, 'id': 'other/model:free'}

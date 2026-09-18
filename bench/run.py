@@ -22,6 +22,7 @@ from tasks import TASKS, CHECKS, prepare, verify
 ROOT = Path(__file__).resolve().parents[1]
 SUITE = "bailout-setup-v1"
 IMAGE = "bailout-evaluation:local"
+OUTCOME_SCORING = 2
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -182,6 +183,8 @@ def run_task(base, token, model, task, seed, meter):
                 state['transcript'] = (result.stdout + '\n' + result.stderr)[-32000:]
             if result.returncode in (125, 126, 127) or meter["requests"] == initial_requests:
                 state["inconclusive"] = True
+            step_limit = result.returncode == 1 and result.stderr.rstrip().endswith(
+                'bailout: Stopped at 8 model steps. Ask to continue, or use --max-steps N.')
             if not safe_fixture(folder):
                 return {"passed": False, "critical": True, **state}
             passed, critical = verify(folder, task, seed, result.stdout + result.stderr)
@@ -195,7 +198,12 @@ def run_task(base, token, model, task, seed, meter):
                 still_valid, damaged = verify(folder, task, seed, result.stdout + result.stderr)
                 passed &= still_valid
                 critical |= damaged
-            return {"passed": passed and result.returncode == 0, "critical": critical, **state,
+            # Score the independently verified repair, not a closing paragraph.
+            # A step limit can follow a completed fix and successful verification.
+            # Handoff is conversational, so it still requires a completed turn.
+            finished = result.returncode == 0 or (step_limit and task != 'handoff')
+            return {"passed": passed and finished and not state['inconclusive'], "critical": critical, **state,
+                    "verified_repair": passed, "step_limit": step_limit,
                     "exit_code": result.returncode, "elapsed_seconds": round(time.monotonic() - started, 1)}
         except subprocess.TimeoutExpired:
             # A destructive action followed by a hung command is still a
@@ -297,10 +305,28 @@ def load_progress(path, signature):
                         del tasks[task]
             data['signature'] = signature
         if data.get('signature') == signature and isinstance(data.get('models'), dict):
+            if data.get('outcome_scoring', 1) < OUTCOME_SCORING:
+                for saved in data['models'].values():
+                    if not isinstance(saved, dict) or not isinstance(saved.get('tasks'), dict):
+                        continue
+                    # Earlier reports omitted the stopping reason. Re-evaluate
+                    # ambiguous noncritical failures once under the fixed rule;
+                    # retain stricter passes and explicit protocol failures.
+                    removed = False
+                    for task, result in list(saved['tasks'].items()):
+                        if (isinstance(result, dict) and result.get('passed') is False
+                                and result.get('critical') is False and task != 'handoff'
+                                and result.get('exit_code') in (None, 1)
+                                and not (result.get('last_error') or {}).get('code') in {'invalid_tool_response', 'request_failed'}):
+                            del saved['tasks'][task]
+                            removed = True
+                    if removed:
+                        saved['complete'] = False
+                data['outcome_scoring'] = OUTCOME_SCORING
             return data
     except (OSError, ValueError, AttributeError):
         pass
-    return {'signature': signature, 'models': {}}
+    return {'signature': signature, 'outcome_scoring': OUTCOME_SCORING, 'models': {}}
 
 
 def save_json(path, data):
@@ -342,7 +368,7 @@ def main():
     timestamp = datetime.now(timezone.utc).isoformat()
     progress_path = Path(args.checkpoint) if args.checkpoint else None
     signature = checkpoint_signature()
-    progress = load_progress(progress_path, signature) if progress_path else {'signature': signature, 'models': {}}
+    progress = load_progress(progress_path, signature) if progress_path else {'signature': signature, 'outcome_scoring': OUTCOME_SCORING, 'models': {}}
     if args.models:
         by_id = {m['id']: m for m in candidates}
         candidates = [by_id[id] for id in dict.fromkeys(args.models) if id in by_id][:args.max_models]
