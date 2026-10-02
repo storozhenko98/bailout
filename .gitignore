@@ -12,3 +12,5 @@ __pycache__/
 .venv-workers/
 python_modules/
 /artifacts/
+/result
+/result-*

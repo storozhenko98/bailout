@@ -17,6 +17,12 @@ No account, local API key, Git, Node, Python, or existing agent required.
 Apple Silicon macOS, x64 Linux, and ARM64 Linux. Bring Bash, curl, internet access,
 and the usual base utilities (including tar and a SHA-256 utility).
 
+With Nix, nothing is installed at all: `nix run github:storozhenko98/bailout`,
+or `nix profile install github:storozhenko98/bailout` to keep it. Flake builds link
+against nixpkgs, not the published musl release assets, and cannot self-update into
+the read-only store — upgrade with a fresh `nix profile install`. Uninstall is a
+plain `nix profile remove`; there is no binary left behind either way.
+
 [Website](https://bailout.dev) · [Setup & recovery guide](https://bailout.dev/docs/) · [Releases](https://github.com/storozhenko98/bailout/releases/latest)
 
 [![OpenCode will not start. Bailout repairs its config, then is deleted.](site/demo/bailout-demo-v2.gif)](https://bailout.dev/demo/)
@@ -210,6 +216,10 @@ From the [published v0.7.3 assets](https://github.com/storozhenko98/bailout/rele
 | Linux ARM64 | 790,784 bytes | 397,031 bytes |
 
 ## Build and test
+
+`nix develop` provides the full toolchain below — Rust, Python with the demo
+render dependencies, uv, and Node 22 — and `nix build` compiles the binary with
+the release size check enforced.
 
 ```sh
 cargo test --locked

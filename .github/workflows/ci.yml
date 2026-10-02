@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -36,3 +37,11 @@ jobs:
       - run: bash -n install.sh
       - run: python3 scripts/test-installer.py
       - run: python3 scripts/check-social.py
+
+  # Guards the flake against Cargo.lock and nixpkgs breakage.
+  nix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix build
